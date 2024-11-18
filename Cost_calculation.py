@@ -1,3 +1,5 @@
+#ある現場の土量を設定した後に、切土と盛土の組み合わせに対して最短経路を計算するプログラム
+
 import pulp
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,17 +14,7 @@ v =  1/temp_eff
 tan_alpha = math.sqrt(v**2-1)
 sin_alpha = math.sqrt(v**2-1)/v
 distance = 0
-temp = [[(0, 0), (0, 1)],[(1, 1),(2, 2)],[(1, 2),(2, 1)]]
 # 距離コストの計算
-
-import numpy as np
-import time
-import math    
-
-temp_eff = 0.5
-v =  1/temp_eff
-tan_alpha = math.sqrt(v**2-1)
-sin_alpha = math.sqrt(v**2-1)/v
 
 def calculate_cost(cut_indices, fill_indices,temp):
 
@@ -99,7 +91,7 @@ def calculate_cost(cut_indices, fill_indices,temp):
                 all(isinstance(coord, (int, float)) for coord in point) 
                 for point in temp_i)):
             print("shortest_point_to_road error:temp_iは[(p1,q1),(p2,q2)]の型で入力してください")
-            return None
+            return None,None
         point = []
         if temp_i[0][0] == temp_i[1][0]: #仮設道路が垂直の場合
             a = temp_i[0][0]
@@ -174,22 +166,24 @@ def calculate_cost(cut_indices, fill_indices,temp):
 
     distance = 0
     
-
     temp_number = len(temp)
     temp_list = [] #各仮設道路の端点、交点の座標を格納するリスト(交点がない場合はNoneを格納)
     #交点の存在の確認
     for i in range(temp_number):
         distance_list_tempi = [temp[i][0],temp[i][1]]
-        for k in range(temp_number):
-            distance_list_tempi.insert(-1,None)
+        # for k in range(temp_number):
+        #     distance_list_tempi.insert(-1,None)
         for j in range(temp_number):
             if(i!= j):
                 if is_intersect(temp[i][0],temp[i][1],temp[j][0],temp[j][1]): 
-                    distance_list_tempi[j+1] = calculate_intersection(temp[i][0],temp[i][1],temp[j][0],temp[j][1])
+                    distance_list_tempi.append(calculate_intersection(temp[i][0],temp[i][1],temp[j][0],temp[j][1]))
         temp_list.append(distance_list_tempi)
 
 
-    print(temp_list,"\n")
+    print("端点のみのリスト",temp_list,"\n")
+
+
+
 
     #各仮設道路の端点、交点から別の仮設道路に角度alphaで下した点を下す
     additional_point = [[] for _ in range(temp_number)] #各仮設道路の端点・交点から別の仮設道路に角度alphaで下した点を格納するリスト
@@ -217,7 +211,7 @@ def calculate_cost(cut_indices, fill_indices,temp):
     #     print(f"temp_list[{i}])",temp_list[i],"\n")
 
     temp_list_cleaned = [list(filter(lambda x: x is not None, sublist)) for sublist in temp_list]
-    print("temp_list_cleaned",temp_list_cleaned)
+    # print("交点、端点、角度αで下した点のリスト",temp_list_cleaned)
 
 
     #startとgoalを加えて最短コストをWarshall-Floydを使って計算
@@ -269,8 +263,24 @@ def calculate_cost(cut_indices, fill_indices,temp):
         for i in range(len(cut_indices)):
             for j in range(len(fill_indices)):
                 temp_list_cleaned_copy_ij = copy.deepcopy(temp_list_cleaned)
+                
+
+                
+                #cut_indices[i][0]から各仮設道路に角度alphaで下した点をtemp_list_cleaned_copy_ijに追加
+                for k in range(len(temp_list_cleaned)):
+                    temp_k = [temp_list_cleaned_copy_ij[k][0],temp_list_cleaned_copy_ij[k][1]]
+                    point = shortest_point_to_road(cut_indices[i][0][0],cut_indices[i][0][1],temp_k)[0]
+                    if point != None:
+                        for l in range(len(point)):
+                            if point[l] != None:
+                                temp_list_cleaned_copy_ij[k].insert(-1,point[l])
+                
+
+                #cut_indices[i]とfill_indices[j]をtemp_list_cleaned_copy_ijに追加
                 temp_list_cleaned_copy_ij.insert(0,[cut_indices[i][0]])
                 temp_list_cleaned_copy_ij.append([fill_indices[j][0]])
+
+                print(f"{cut_indices[i]}の切土から{fill_indices[j]}の盛土までの最短経路を計算")
                 print("temp_list_cleaned",temp_list_cleaned)
                 print("temp_list_cleaned_copy_ij",temp_list_cleaned_copy_ij)
                 cost[i][j],pre_point_matrix_value = Warshall_Floyd(temp_list_cleaned_copy_ij)
@@ -329,26 +339,19 @@ def calculate_cost(cut_indices, fill_indices,temp):
         print("route_after",route)
         return route
        
+    #ここから実行部分   
     cost,pre_point_matrix = shortest_route_search(cut_indices, fill_indices,temp_list_cleaned)
     for i in range(len(cost)):
         print(f"cost[{i}]",cost[i])
     print("\n")
     print("temp_list_cleaned",temp_list_cleaned)
 
-
 # 0番目の点から14番目の点までの経路を探す
-
     return cost,pre_point_matrix
 
-# #切土の座標と土量
-# cut_indices = [[(1, 0),1],[(1, 2),1],[(2, 0),1], [(2, 1),1], [(2, 2),1],[(3, 0),1],[(3, 1),1]]
-# #盛土の座標と土量
-# fill_indices = [[(0, 0),1], [(0, 1),1], [(0, 2),1], [(1, 1),2],[(3, 2),2]]
-
-#切土の座標と土量
-cut_indices = [[(0, 1),1]]
+cut_indices = [[(1, 0),2],[(1, 2),2],[(2, 0),2],[(2, 1),2],[(2, 2),2],[(2, 3),2],[(3, 0),2],[(3, 1),2],[(3, 3),3]]
 #盛土の座標と土量
-fill_indices = [[(2, 1),1]]
+fill_indices = [[(0, 0),3],[(0, 1),2],[(0, 2),2],[(0, 3),2],[(1, 3),3],[(1, 1),3],[(3, 2),4]]
 
 cut_indices_float = []
 for i in range(len(cut_indices)):
@@ -361,7 +364,7 @@ for i in range(len(fill_indices)):
     fill_indices_float.append([new_coords, fill_indices[i][1]])  # 新しいリストに追加
 #仮設道路の情報
 # temp = [[(0, 0), (0, 1)],[(1, 1),(2, 2)],[(1, 2),(2, 1)]]
-temp = [[(0, 0), (0, 1)],[(1, 2),(2, 1)]]
+temp = []
 
 start_time = time.time()
 
@@ -374,85 +377,16 @@ if (sum_cut != sum_fill):
     exit() 
 
 
+print("cut_indices_float",cut_indices_float)
+print("fill_indices_float",fill_indices_float)
 # コスト行列の作成
 costs,route_matrix = calculate_cost(cut_indices_float, fill_indices_float,temp)
-print("route_matrix",route_matrix)
+# print("route_matrix",route_matrix)
 route_arrows = route_matrix[0]
-print("route_matrix",route_matrix)
-print("len(route_matrix)",len(route_matrix))
-print("\n")
+# print("route_matrix",route_matrix)
+# print("len(route_matrix)",len(route_matrix))
+# print("\n")
 
-
-# # 問題の設定
-# prob = pulp.LpProblem("土砂運搬最適化", pulp.LpMinimize)
-
-# # 変数の定義
-# T = sum_cut  # ステップ数
-# num_fill = len(fill_indices)
-# num_cut = len(cut_indices)
-
-# # 変数xはステップtで切土cから盛土fに運んだ時、x[t][c][f]=1となる。それ以外は0
-# x_vars = pulp.LpVariable.dicts("x", (range(T), range(num_cut), range(num_fill)), cat='Binary')
-
-# objective = pulp.LpAffineExpression()
-# m=[0] * T
-# n=[0] * T
-# #各ステップで切土から盛土に土を運んだ時のコスト
-# for t in range(T):
-#     for f in range(num_fill):
-#         for c in range(num_cut):
-#           if (x_vars[t][c][f]==1):
-#             m[t] = c
-#             n[t] = f
-#           objective += 5* costs[c][f] * x_vars[t][c][f]
-# #盛土地点から次のステップの切土地点への移動コストを追加
-# for t in range(T-1):
-#     objective += costs[m[t+1]][n[t]]
-
-# prob += objective
-
-
-
-
-# # 制約条件
-# # 各ステップでちょうど1つの切土地点と盛土地点が選ばれる
-# for t in range(T):
-#     prob += pulp.lpSum(x_vars[t][c][f] for c in range(num_cut) for f in range(num_fill)) == 1
-
-
-# # 最終ステップで全ての土量がゼロになるように制約
-# for c in range(num_cut):
-#     prob += pulp.lpSum(x_vars[t][c][f] for t in range(T) for f in range(num_fill)) == cut_indices[c][1]
-
-# for f in range(num_fill):
-#     prob += pulp.lpSum(x_vars[t][c][f] for t in range(T) for c in range(num_cut)) == fill_indices[f][1]
-# # 問題の解決
-# prob.solve()
-# end_time = time.time()
-
-
-
-# # 結果の表示
-# print("ステータス:", pulp.LpStatus[prob.status])
-# print("最小コスト:", pulp.value(prob.objective))
-# print(f"Calculation Time: {end_time - start_time:.6f} seconds")
-# # 複数の矢印を描画するための例
-# arrows = []
-# route_arrows = []
-
-# # 解の表示
-# for t in range(T):
-#     print(f"\nステップ {t+1}:")
-#     for f in range(num_fill):
-#         for c in range(num_cut):
-#             if pulp.value(x_vars[t][c][f]) > 0.5:
-#                 print(f"  切土地点 ({cut_indices[c][0]}) から 盛土地点 ({fill_indices[f][0]}) に土が運ばれました")
-#                 arrows.append((cut_indices[c][0],fill_indices[f][0]))
-#                 index = c * len(fill_indices) + f
-#                 route_arrows.append(route_matrix[index])
-
-# print("arrows",arrows)
-# print("route_arrows",route_arrows)
 
 
 #結果の可視化

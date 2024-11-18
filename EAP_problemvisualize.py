@@ -2,7 +2,7 @@ import pulp
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-#土量を表示するためのファイル
+#土量を表示するためのコード
 
 # セルの土量設定
 # 土量 = np.array([-1000, -4000, -5000, 550, -500, 800, 450, 6700, 2000]).reshape((3, 3))
@@ -11,21 +11,18 @@ import matplotlib.animation as animation
 def calculate_distance(i, j, k, l):
     return np.sqrt((i - k)**2 + (j - l)**2)
 
-# セルの座標リスト
-cut_indices = [(1, 0), (1, 2), (2, 0), (2, 1), (2, 2),(3, 0),(3, 1)]
-fill_indices = [(0, 0), (0, 1), (0, 2), (1, 1),(3, 2)]
 
-# cut_soil = [550, 800, 450, 6700, 2000]
-# fill_soil = [1000, 4000, 5000, 500]
-cut_soil = [1, 1, 1, 1, 1, 1, 1]
-fill_soil = [1, 1, 1, 2, 2]
 
+#切土の座標と土量
+cut_indices = [[(1, 0),1],[(1, 2),1],[(2, 0),1],[(2, 1),1],[(2, 2),1],[(2, 3),1],[(3, 0),1],[(3, 1),1],[(3, 3),2]]
+#盛土の座標と土量
+fill_indices = [[(0, 0),2],[(0, 1),1],[(0, 2),1],[(0, 3),1],[(1, 3),2],[(1, 1),1],[(3, 2),2]]
 
 #結果の可視化
 
 # グリッドのサイズ
 grid_size_x = 4  # x方向のサイズ
-grid_size_y = 3  # y方向のサイズ
+grid_size_y = 4  # y方向のサイズ
 
 # 格子点の座標を生成
 x = [i for i in range(grid_size_x)]
@@ -37,13 +34,14 @@ x_coords = X.flatten()
 y_coords = Y.flatten()
 
 # 土量マトリックスを作成（仮に色付けのためのデータを用意）
-soil_amount = np.zeros((3, 4))
-for (i, j) in cut_indices:
+soil_amount = np.zeros((4, 4))
+for [(i, j),k] in cut_indices:
     soil_amount[j, i] = 1
-for (i, j) in fill_indices:
+for [(i, j),k] in fill_indices:
     soil_amount[j, i] = 0
 
-temp = [[(0, 0), (0, 1)],[(1, 1),(2, 2)],[(1, 2),(2, 1)]]
+
+temp = []
 
 # プロットの準備
 plt.figure(figsize=(8, 6))  # サイズを変更
@@ -63,12 +61,12 @@ for k in range(len(temp)):
 #     plt.text(x_val + 0.5, y_val + 0.4, f'({x_val},{y_val})', fontsize=12, ha='center', va='top')
 
 # 切土地点の座標に切土量をラベルとして表示
-for idx, (i, j) in enumerate(cut_indices):
-    plt.text(i + 0.5, j + 0.5, f'Cut: {cut_soil[idx]}', fontsize=12, ha='center', color='black')
+for [(i, j),k] in cut_indices:
+    plt.text(i + 0.5, j + 0.5, f'Cut: {k}', fontsize=12, ha='center', color='black')
 
 # 盛土地点の座標に盛土量をラベルとして表示
-for idx, (i, j) in enumerate(fill_indices):
-    plt.text(i + 0.5, j + 0.5, f'Fill: {fill_soil[idx]}', fontsize=12, ha='center', color='black')
+for [(i, j),k] in fill_indices:
+    plt.text(i + 0.5, j + 0.5, f'Fill: {k}', fontsize=12, ha='center', color='black')
 
 
 
@@ -82,7 +80,7 @@ for i in np.arange(-1.0, grid_size_x+1, 1.0):
 plt.xlim(-0.5, grid_size_x + 0.5)
 plt.ylim(-0.5, grid_size_y + 0.5)
 plt.gca().set_aspect('equal', adjustable='box')
-plt.title('4x3 Grid with Custom Gridlines')
+plt.title(f'{grid_size_x}x{grid_size_y} Grid with Custom Gridlines')
 plt.xlabel('X-axis')
 plt.ylabel('Y-axis')
 

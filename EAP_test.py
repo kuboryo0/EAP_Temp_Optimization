@@ -24,7 +24,9 @@ def calculate_cost(dist,temp):
         print("temprory road does not exit ")
         exit()
 
-    
+def init_animate (): #初期化関数(これがないとanimate関数のi=0が2回繰り返される)
+        pass
+
 def animate(i):
     # 前のフレームの矢印をクリア
     ax.clear()
@@ -37,6 +39,16 @@ def animate(i):
     for x_val, y_val in zip(x_coords, y_coords):
         ax.text(x_val + 0.5, y_val + 0.4, f'({x_val},{y_val})', fontsize=12, ha='center', va='top')
     
+    #土量を更新
+    if i % 2 == 0:
+            route_arrows_i = arrows[i//2]
+            start_point = route_arrows_i[0]
+            end_point = route_arrows_i[-1]
+            # print("start_point", start_point)
+            # print("end_point", end_point)
+            soil_amount[int(start_point[1]), int(start_point[0])] -= 1/max_soil/2  # 開始点の土量を減少
+            soil_amount[int(end_point[1]), int(end_point[0])] += 1/max_soil/2 # 終了点の土量を増加
+
     # 現在のステップまでの矢印を描画
     for j in range(i + 1):
         if(j % 2 == 0):
@@ -90,14 +102,16 @@ def animate(i):
  
 
 # セルの座標リスト
-cut_indices = [(1, 0), (1, 2), (2, 0), (2, 1), (2, 2),(3, 0),(3, 1)]
-fill_indices = [(0, 0), (0, 1), (0, 2), (1, 1),(3, 2)]
+# cut_indices = [[(0, 1),1],[(0, 2),1],[(1, 2),1],[(2, 0),1],[(2, 2),1]]
+cut_indices = [[(0.0,1.0),1],[(0.0,2.0),1],[(1.0,2.0),1],[(2.0,0.0),1],[(2.0,2.0),1]]
+fill_indices = [[(0, 0),1],[(1, 0),1],[(1, 1),2],[(2, 1),1]]
+fill_indices = [[(0.0,0.0),1],[(1.0,0.0),1],[(1.0,1.0),2],[(2.0,1.0),1]]
 
 # セルの土量
 # cut_soil = [550, 800, 450, 6700, 2000]
 # fill_soil = [1000, 4000, 5000, 500]
-cut_soil = [1, 1, 1, 1, 1, 1, 1]
-fill_soil = [1, 1, 1, 2, 2]
+cut_soil = [1, 1, 1, 1, 1]
+fill_soil = [1, 1, 2, 1]
 if (sum(cut_soil)!=sum(fill_soil)):
     print("input error:切土と盛土の土量が違います")
     exit() 
@@ -108,7 +122,8 @@ temp_road = [(0,0)]
 
 #0番目の切土から0番目の盛り土に仮設道路があることを表す
 # コスト行列の作成
-dist = np.array([[calculate_distance(c[0], c[1], f[0], f[1]) for f in fill_indices] for c in cut_indices])
+print("cut_indices",cut_indices[1][0][0])
+dist = np.array([[calculate_distance(cut_indices[j][0][0], cut_indices[j][0][1], fill_indices[i][0][0], fill_indices[i][0][1]) for i in range(len(fill_indices))] for j in range(len(cut_indices))])
 costs = calculate_cost(dist,temp_road)
 # 問題の設定
 prob = pulp.LpProblem("土砂運搬最適化", pulp.LpMinimize)
@@ -221,7 +236,7 @@ for t in range(T):
 #結果の可視化
 
 # グリッドのサイズ
-grid_size_x = 4  # x方向のサイズ
+grid_size_x = 3  # x方向のサイズ
 grid_size_y = 3  # y方向のサイズ
 
 # 格子点の座標を生成
@@ -233,14 +248,17 @@ X, Y = np.meshgrid(x, y)
 x_coords = X.flatten()
 y_coords = Y.flatten()
 
+max_soil = max(max(cut_indices[i][1] for i in range(len(cut_indices))),max(fill_indices[i][1] for i in range(len(fill_indices))))
+
+
 # 土量マトリックスを作成（仮に色付けのためのデータを用意）
-soil_amount = np.zeros((3, 4))
-for (i, j) in cut_indices:
-    soil_amount[j, i] = 1
-for (i, j) in fill_indices:
-    soil_amount[j, i] = 0
+soil_amount = np.zeros((3, 3))
+for [(i, j),k] in cut_indices:
+    soil_amount[j, i] = 0.5 + k/max_soil/2
+for [(i, j),k] in fill_indices:
+    soil_amount[j, i] = 0.5 - k/max_soil/2
 
-
+print("arrows",arrows)
 
 
 
@@ -248,7 +266,7 @@ for (i, j) in fill_indices:
 fig, ax = plt.subplots(figsize=(8, 6))
 
 # アニメーションの実行
-ani = animation.FuncAnimation(fig, animate, frames=2*len(arrows), interval=1000, repeat=False)
+ani = animation.FuncAnimation(fig, animate, frames=2*len(arrows),init_func=init_animate, interval=1000, repeat=False)
 
 # GIFや動画として保存したい場合
 # ani.save('animation.gif', writer='imagemagick')

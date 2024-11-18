@@ -7,7 +7,7 @@ import time
 import copy
 # セルの土量設定
 # 土量 = np.array([-1000, -4000, -5000, 550, -500, 800, 450, 6700, 2000]).reshape((3, 3))
-temp_eff = 0.5
+temp_eff = 0.7
 v =  1/temp_eff
 tan_alpha = math.sqrt(v**2-1)
 sin_alpha = math.sqrt(v**2-1)/v
@@ -173,45 +173,56 @@ def calculate_cost(cut_indices, fill_indices,temp):
     #交点の存在の確認
     for i in range(temp_number):
         distance_list_tempi = [temp[i][0],temp[i][1]]
-        for k in range(temp_number):
-            distance_list_tempi.insert(-1,None)
-        for j in range(temp_number):
-            if(i!= j):
-                if is_intersect(temp[i][0],temp[i][1],temp[j][0],temp[j][1]): 
-                    distance_list_tempi[j+1] = calculate_intersection(temp[i][0],temp[i][1],temp[j][0],temp[j][1])
+    #     for k in range(temp_number):
+    #         distance_list_tempi.insert(-1,None)
+    #     for j in range(temp_number):
+    #         if(i!= j):
+    #             if is_intersect(temp[i][0],temp[i][1],temp[j][0],temp[j][1]): 
+    #                 distance_list_tempi[j+1] = calculate_intersection(temp[i][0],temp[i][1],temp[j][0],temp[j][1])
         temp_list.append(distance_list_tempi)
 
+    #交点の存在の確認
+    # for i in range(temp_number):
+    #     distance_list_tempi = [temp[i][0],temp[i][1]]
+    #     # for k in range(temp_number):
+    #     #     distance_list_tempi.insert(-1,None)
+    #     for j in range(temp_number):
+    #         if(i!= j):
+    #             if is_intersect(temp[i][0],temp[i][1],temp[j][0],temp[j][1]): 
+    #                 distance_list_tempi.append(calculate_intersection(temp[i][0],temp[i][1],temp[j][0],temp[j][1]))
+    #     temp_list.append(distance_list_tempi)
 
     # print(temp_list,"\n")
 
     #各仮設道路の端点、交点から別の仮設道路に角度alphaで下した点を下す
-    additional_point = [[] for _ in range(temp_number)] #各仮設道路の端点・交点から別の仮設道路に角度alphaで下した点を格納するリスト
-    for i in range(temp_number):
-        for j in range(len(temp_list[i])):
-            if temp_list[i][j] is not None and isinstance(temp_list[i][j], tuple):
-                for k in range(temp_number):
-                    if k != i: 
-                        point,distance = shortest_point_to_road(temp_list[i][j][0],temp_list[i][j][1],temp[k])
-                        # print(f"{i}番目の仮設道路の{j}番目の座標{temp_list[i][j]}から{k}番目の仮設道路に下した座標:",point)
-                        for l in range(len(point)):
-                            if point[l] != None and distance != 0:
-                                # additional_point_tempi.append(point[l]) #下した点を追加
-                                additional_point[k].append(point[l])
-    # print("additional_point",additional_point)
-    additional_point_cleaned = remove_duplicates(additional_point)
-    # print("additional_point_cleaned",additional_point_cleaned)
-    for k in range(len(temp_list)):
-        if isinstance(additional_point_cleaned[k], (list,tuple)) and len(additional_point_cleaned[k]) != 0:
-            for l in range(len(additional_point_cleaned[k])):
-                temp_list[k].insert(-1,additional_point[k][l])
+    # additional_point = [[] for _ in range(temp_number)] #各仮設道路の端点・交点から別の仮設道路に角度alphaで下した点を格納するリスト
+    # for i in range(temp_number):
+    #     for j in range(len(temp_list[i])):
+    #         if temp_list[i][j] is not None and isinstance(temp_list[i][j], tuple):
+    #             for k in range(temp_number):
+    #                 if k != i: 
+    #                     point,distance = shortest_point_to_road(temp_list[i][j][0],temp_list[i][j][1],temp[k])
+    #                     # print(f"{i}番目の仮設道路の{j}番目の座標{temp_list[i][j]}から{k}番目の仮設道路に下した座標:",point)
+    #                     for l in range(len(point)):
+    #                         if point[l] != None and distance != 0:
+    #                             # additional_point_tempi.append(point[l]) #下した点を追加
+    #                             additional_point[k].append(point[l])
+    # # print("additional_point",additional_point)
+    # additional_point_cleaned = remove_duplicates(additional_point)
+    # # print("additional_point_cleaned",additional_point_cleaned)
+    # for k in range(len(temp_list)):
+    #     if isinstance(additional_point_cleaned[k], (list,tuple)) and len(additional_point_cleaned[k]) != 0:
+    #         for l in range(len(additional_point_cleaned[k])):
+    #             temp_list[k].insert(-1,additional_point[k][l])
 
 
     # for i in range(len(temp_list)):
     #     print(f"temp_list[{i}])",temp_list[i],"\n")
 
     temp_list_cleaned = [list(filter(lambda x: x is not None, sublist)) for sublist in temp_list]
+    # print("交点、端点、角度αで下した点のリスト",temp_list_cleaned)
+    # print("temp_list",temp_list)
     # print("temp_list_cleaned",temp_list_cleaned)
-
 
     #startとgoalを加えて最短コストをWarshall-Floydを使って計算
 
@@ -262,6 +273,16 @@ def calculate_cost(cut_indices, fill_indices,temp):
         for i in range(len(cut_indices)):
             for j in range(len(fill_indices)):
                 temp_list_cleaned_copy_ij = copy.deepcopy(temp_list_cleaned)
+
+                                #cut_indices[i][0]から各仮設道路に角度alphaで下した点をtemp_list_cleaned_copy_ijに追加
+                # for k in range(len(temp_list_cleaned)):
+                #     temp_k = [temp_list_cleaned_copy_ij[k][0],temp_list_cleaned_copy_ij[k][1]]
+                #     point = shortest_point_to_road(cut_indices[i][0][0],cut_indices[i][0][1],temp_k)[0]
+                #     if point != None:
+                #         for l in range(len(point)):
+                #             if point[l] != None:
+                #                 temp_list_cleaned_copy_ij[k].insert(-1,point[l])
+
                 temp_list_cleaned_copy_ij.insert(0,[cut_indices[i][0]])
                 temp_list_cleaned_copy_ij.append([fill_indices[j][0]])
                 # print("temp_list_cleaned",temp_list_cleaned)
@@ -338,17 +359,100 @@ def temp_length(temp):
     return distance
 
 #仮設道路がどれくらい利用されているかを計算
-def temp_usage(route_list,temp):
-    if not (isinstance(temp, list) and len(temp) == 2 and
-    all(isinstance(point, tuple) and len(point) == 2 and 
-        all(isinstance(coord, (int, float)) for coord in point) 
-        for point in temp)):
-        print("仮設道路は1つである必要があります")
-        exit()
-    
-    temp_cost = 0
+def temp_usage(route_list, temp):
+    def on_segment(p:tuple, q:tuple, r:tuple) -> bool:
+            """点rが線分pq上にあるかどうかを確認する関数"""
+            if min(p[0], q[0]) <= r[0] <= max(p[0], q[0]) and min(p[1], q[1]) <= r[1] <= max(p[1], q[1]):
+                return True
+            return False
 
-    return
+    def on_line(p:tuple, q:tuple, r:tuple):
+                delta = 0.000001
+                bool = False
+                    # ベクトル pr の傾きと qr の傾きを比較,rがpqの間にあるかどうか⇒rがpq上にあるかを確認
+                if abs((r[1] - p[1]) * (q[0] - r[0]) - (r[0] - p[0]) * (q[1] - r[1])) < delta and on_segment(p, q, r):
+                    bool = True
+                return bool
+                
+
+    # 2点間の距離を計算する関数
+    def distance(point1, point2):
+        return math.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
+    
+
+    # 仮設道路の形式をチェック
+    if not (isinstance(temp, list) and len(temp) == 2 and
+            all(isinstance(point, tuple) and len(point) == 2 and
+                all(isinstance(coord, (int, float)) for coord in point)
+                for point in temp)):
+        print("仮設道路は1つである必要があります")
+        return exit(1)
+    
+    # 仮設道路の総距離を計算
+    temp_distance = distance(temp[0], temp[1])
+    
+    # 全経路で仮設道路が使われている割合を計算
+    total_temp_usage = 0
+
+    for route in route_list:
+        route_temp_usage = 0
+        
+        # 経路上の各セグメントについて距離を計算
+        for i in range(len(route) - 1):
+            segment1 = route[i]
+            segment2 = route[i + 1]
+            # print("segment1,segment2",segment1,segment2)
+            
+            #経路上に仮設道路上がある場合
+            if (on_line(segment1,segment2,temp[0]) and on_line(segment1,segment2,temp[1])):
+                route_temp_usage += distance(temp[0], temp[1])
+            #     print("distance",distance(temp[0], temp[1]))
+            #     print("経路上に仮設道路上がある場合")
+            # # segmetn1とsegment2が両方仮設道路上にある場合 または segment1とsegment2が仮設道路の端点と一致する場合
+            # elif((on_line(temp[0], temp[1], segment1)  and on_line(temp[0], temp[1], segment2))
+            #    or ((segment1 == temp[0] and segment2 == temp[1]) or (segment1 == temp[1] and segment2 == temp[0]))):
+            #     print("segment1とsegment2が両方仮設道路上にある場合")
+            #     route_temp_usage += distance(segment1, segment2)
+            elif(on_line(temp[0], temp[1], segment1)  and on_line(temp[0], temp[1], segment2)):
+                # print("distance",distance(segment1, segment2))
+                # print("segment1とsegment2が両方仮設道路上にある場合")
+                route_temp_usage += distance(segment1, segment2)
+            # segment1が仮設道路上にあり、segment2が仮設道路上にない場合
+            elif (on_line(temp[0], temp[1], segment1) and not on_line(temp[0], temp[1], segment2)):
+                if distance(segment2, temp[0]) < distance(segment2, temp[1]): # segment2,temp[0],segment1,temp[1]の順番で並んでいる場合
+                    route_temp_usage += distance(segment1, temp[0])
+                #     print("distance",distance(segment1, temp[0]))
+                #     print("segment2,temp[0],segment1,temp[1]の順番で並んでいる場合")
+                else: # temp[0],segment1,temp[1],segment2の順番で並んでいる場合
+                    route_temp_usage += distance(segment1, temp[1])
+                #     print("distance",distance(segment1, temp[1]))
+                #     print("temp[0],segment1,temp[1],segment2の順番で並んでいる場合")
+                # print("segment1が仮設道路上にあり、segment2が仮設道路上にない場合")
+            #segment2が仮設道路上にあり、segment1が仮設道路上にない場合
+            elif (on_line(temp[0], temp[1], segment2) and not on_line(temp[0], temp[1], segment1)):
+                if distance(segment1, temp[0]) < distance(segment1, temp[1]): # segment2,temp[0],segment1,temp[1]の順番で並んでいる場合
+                    route_temp_usage += distance(segment2, temp[0])
+                    # print("distance",distance(segment2, temp[0]))
+                    # print("segment1,temp[0],segment2,temp[1]の順番で並んでいる場合")
+                else: # temp[0],segment1,temp[1],segment2の順番で並んでいる場合
+                    route_temp_usage += distance(segment2, temp[1])
+                #     print("distance",distance(segment2, temp[1]))
+                #     print("temp[0],segment2,temp[1],segment1の順番で並んでいる場合")
+                # print("segment2が仮設道路上にあり、segment1が仮設道路上にない場合")
+
+            else:
+                route_temp_usage += 0
+                # print("その他の場合")
+        # 仮設道路が使われた割合を加算
+        total_temp_usage += route_temp_usage
+
+
+    
+    # 仮設道路が使われた割合を仮設道路の距離に対して返す
+    if temp_distance == 0:
+        return 0
+    weight = total_temp_usage / temp_distance
+    return total_temp_usage / temp_distance
 
 
 def plot(grid_size_x,grid_size_y, route_arrows,temp,cut_indices,fill_indices):  #結果の可視化
@@ -372,10 +476,15 @@ def plot(grid_size_x,grid_size_y, route_arrows,temp,cut_indices,fill_indices):  
     max_soil = max(max(cut_indices[i][1] for i in range(len(cut_indices))),max(fill_indices[i][1] for i in range(len(fill_indices))))
     # print("max_soil",max_soil)
     for [(i, j),k] in cut_indices:
-        soil_amount[int(j), int(i)] = 0.5 + k/max_soil/2
+        soil_amount[int(j), int(i)] = 1
     for [(i, j),k] in fill_indices:
-        soil_amount[int(j),int(i)] = 0.5 - k/max_soil/2
+        soil_amount[int(j),int(i)] = 0
 
+    soil_amount_real = np.zeros((grid_size_y, grid_size_x))
+    for [(i, j),k] in cut_indices:
+        soil_amount_real[int(j), int(i)] = 2*k
+    for [(i, j),k] in fill_indices:
+        soil_amount_real[int(j),int(i)] = -2*k
     # print("soil_amount",soil_amount)
 
     def init_animate (): #初期化関数(これがないとanimate関数のi=0が2回繰り返される)
@@ -395,18 +504,27 @@ def plot(grid_size_x,grid_size_y, route_arrows,temp,cut_indices,fill_indices):  
             end_point = route_arrows_i[-1]
             # print("start_point", start_point)
             # print("end_point", end_point)
-            soil_amount[int(start_point[1]), int(start_point[0])] -= 1/max_soil/2  # 開始点の土量を減少
-            soil_amount[int(end_point[1]), int(end_point[0])] += 1/max_soil/2 # 終了点の土量を増加
+            # soil_amount[int(start_point[1]), int(start_point[0])] -= 1/max_soil/2  # 開始点の土量を減少
+            # soil_amount[int(end_point[1]), int(end_point[0])] += 1/max_soil/2 # 終了点の土量を増加
             # print("soil_amount",soil_amount)
 
-        # グリッドの描画（背景）
+            soil_amount_real[int(start_point[1]), int(start_point[0])] -= 1  # 開始点の土量を減少
+            soil_amount_real[int(end_point[1]), int(end_point[0])] += 1 # 終了点の土量を増加
+
+            if soil_amount_real[int(start_point[1]), int(start_point[0])] == 0:
+                soil_amount[int(start_point[1]), int(start_point[0])] = 0.5
+            if soil_amount_real[int(end_point[1]), int(end_point[0])] == 0:
+                soil_amount[int(end_point[1]), int(end_point[0])] = 0.5
+
+
+    # グリッドの描画（背景）
         ax.pcolormesh(soil_amount, edgecolors='gray', linewidth=2, cmap='viridis', shading='flat', alpha=0.2)
         ax.scatter(x_coords+0.5, y_coords+0.5, color='blue', marker='o')  # 格子点のプロット
 
-        # 格子点のラベルを表示（x, y方向に0.5ずらす）
+    # 格子点のラベルを表示（x, y方向に0.5ずらす）
         for x_val, y_val in zip(x_coords, y_coords):
-            ax.text(x_val + 0.5, y_val + 0.4, f'({x_val},{y_val})', fontsize=12, ha='center', va='top')
-        
+            ax.text(x_val + 0.5, y_val + 0.4, f'{int(soil_amount_real[y_val][x_val])}', fontsize=12, ha='center', va='top')
+
         #仮設道路を描画
         for k in range(len(temp)):
             start_point, end_point = temp[k]
@@ -433,18 +551,17 @@ def plot(grid_size_x,grid_size_y, route_arrows,temp,cut_indices,fill_indices):  
                         ax.annotate('', xy=adjusted_end, xytext=adjusted_start,
                         arrowprops=dict(facecolor='red', edgecolor='black', linewidth=2, alpha=0.7, shrink=0.05))
 
-                    elif len(route_arrows_j) > 2: #中継点がある場合
-                        for k in range(len(route_arrows_j) - 2):
+                    elif len(route_arrows_j) > 2:
+                        for k in range(len(route_arrows_j) - 1):
                             start_point = route_arrows_j[k]
                             end_point = route_arrows_j[k+1]
                             adjusted_start = (start_point[0] + 0.5, start_point[1] + 0.5)
                             adjusted_end = (end_point[0] + 0.5, end_point[1] + 0.5)
                             ax.annotate('', xy=adjusted_end, xytext=adjusted_start,
-                                        arrowprops=dict(facecolor='red', edgecolor='black', linewidth=2, alpha=0.7, shrink=0.05))
+                                arrowprops=dict(facecolor='red', edgecolor='black', linewidth=2, alpha=0.7, shrink=0.05))
                     # 矢印の番号を矢印の中心に表示
                     mid_point = ((adjusted_start[0] + adjusted_end[0]) / 2, (adjusted_start[1] + adjusted_end[1]) / 2)
                     ax.text(mid_point[0], mid_point[1]+0.1, f'{j//2+1}', fontsize=12, ha='center', color='black')
-
 
                 #盛土から切土までの矢印
                 elif (j%2 == 1 and j//2 <= len(route_arrows)-2):
@@ -482,7 +599,6 @@ def plot(grid_size_x,grid_size_y, route_arrows,temp,cut_indices,fill_indices):  
                         for k in range(len(route_arrows_j) - 1):
                             start_point = route_arrows_j[k]
                             end_point = route_arrows_j[k+1]
-
                             adjusted_start = (start_point[0] + 0.5, start_point[1] + 0.5)
                             adjusted_end = (end_point[0] + 0.5, end_point[1] + 0.5)
                             ax.annotate('', xy=adjusted_end, xytext=adjusted_start,
