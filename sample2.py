@@ -1,81 +1,126 @@
-import random
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
+import copy
 
-grid_size_x = 4
-grid_size_y = 4
-# 仮設道路リスト
-temporary_roads = [
-    {
-        (2, 0): {2},
-        (1, 1): {2, 5},
-        (0, 2): {5},
-    },
-    {
-        (1, 2): {2},
-        (0, 3): {5},
-    },
+# 初期データ
+grid_size_x = 3
+grid_size_y = 3
+path_list = [
+    [(0.0, 0.0), (0.0, 1.0),],
+
 ]
+temporary_roads = [{(1, 2): {6}, (2, 2): {1}}, {(0, 2): {5}, (1, 1): {2, 6}}]
+cut_indices = [[(0, 2), 2],[(1, 0), 1], [(1, 2), 1], [(2, 0), 1]]
+fill_indices = [[(0, 0), 1], [(0, 1), 1],[(1, 1), 1],[(2, 1), 1], [(2, 2), 1]]
 
-# DIRECTIONSリスト
-DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+def plot_3d_routes(grid_size_x, grid_size_y, path_list, temporary_roads, cut_indices, fill_indices):
+    DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
-# 操作関数
-def modify_temporary_roads(temp):
-    if random.random() < 0.15 and len(temp) > 0:  # 15%の確率で要素を削除
-        print("道路を削除")
-        selected_road = random.choice(temp)
-        print("selected_road",selected_road)
-        temp.remove(selected_road)
-    elif random.random() < 0.30:  # 15%（0.15 + 0.15）の確率で要素を追加
-        print("道路を追加")
-        new_temporary_road = {}
-        coord = (random.randint(0, 3), random.randint(0, 3))  # ランダムな座標
-        while True:
-            new_direction_index = random.randint(0, len(DIRECTIONS) - 1)
-            # print("new_direction_index",new_direction_index)
-            print("DIRECTIONS[new_direction_index]",DIRECTIONS[new_direction_index])
-            print("new_coord",coord[0]+  DIRECTIONS[new_direction_index][0], coord[1]+  DIRECTIONS[new_direction_index][1])
-            if  0 <= coord[0]+  DIRECTIONS[new_direction_index][0] <= grid_size_x-1 and 0 <= coord[1]+ DIRECTIONS[new_direction_index][1] <= grid_size_y-1:
-                new_neighbor_coord = (coord[0]+  DIRECTIONS[new_direction_index][0], coord[1]+  DIRECTIONS[new_direction_index][1])
-                break
-        new_temporary_road[coord] = {new_direction_index}
-        neighbor_index = DIRECTIONS.index((-DIRECTIONS[new_direction_index][0], -DIRECTIONS[new_direction_index][1]))
-        new_temporary_road[new_neighbor_coord] = {neighbor_index}
-        print("new_temporary_road",new_temporary_road)
-        temp.append(new_temporary_road)
-    else:  # 残りの確率で既存の要素をランダムに変更
-        if len(temp) > 0:
-            selected_road = random.choice(temp)
-            selected_coord = list(selected_road.keys())[0] if random.choice([True, False]) else list(selected_road.keys())[-1]
-            print("selected_road",selected_road)
-            print("selected_coord",selected_coord)
-            # 方向の変更を実行
-            if random.choice([True, False]):
-                # 既存の方向を削除
-                print("端点を削除")
-                if len(selected_road[selected_coord]) > 0:
-                    selected_road[selected_coord].remove(random.choice(list(selected_road[selected_coord])))
-                # 値が空の場合はキー（座標）を削除
-                if not selected_road[selected_coord]:  # 空のセットならTrue
-                    del selected_road[selected_coord]       
-            else:
-                # 新しい方向を追加
-                print("端点を追加")
-                new_direction = random.randint(0, len(DIRECTIONS) - 1)
-                print("new_direction",new_direction)
-                if new_direction not in selected_road[selected_coord]:
-                    selected_road[selected_coord].add(new_direction)
-                    # 新しい座標を計算
-                    dx, dy = DIRECTIONS[new_direction]
-                    new_coord = (selected_coord[0] + dx, selected_coord[1] + dy)
-                    # 新しい座標の方向を追加
-                    reverse_direction = DIRECTIONS.index((-dx, -dy))
-                    if new_coord not in selected_road:
-                        selected_road[new_coord] = set()
-                    selected_road[new_coord].add(reverse_direction)
-    print("\n")
+    # 土量の初期設定
+    soil_amount = np.zeros((grid_size_x, grid_size_y))
+    for [(i, j), k] in cut_indices:
+        soil_amount[int(i), int(j)] = k
+    for [(i, j), k] in fill_indices:
+        soil_amount[int(i), int(j)] = -k
 
-# 使用例
-print("Before:", temporary_roads)
-for i in range(5):
-    modify_temporary_roads(temporary_roads) 
-    print(f"{i+1}times後のAfter:", temporary_roads)
+    # soil_amount_real_copy = copy.deepcopy(soil_amount)
+
+    # アニメーションの初期化
+    def init_animate():
+        pass
+
+    # アニメーション関数
+    def animate(i):
+        print("i",i)
+        ax.clear()
+        ax.set_xlim(0, grid_size_x)
+        ax.set_ylim(0, grid_size_y)
+        ax.set_zlim(-3, 3)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+        # if i < len(path_list):
+        arrows = path_list[i]
+        start = arrows[0]
+        end = arrows[-1]
+        soil_amount_real_copy = copy.deepcopy(soil_amount)
+        # 更新土量
+        soil_amount_real_copy[int(start[0]), int(start[1])] -= 1
+        soil_amount_real_copy[int(end[0]), int(end[1])] += 1
+        print("soil_amount_real_copy",soil_amount_real_copy)
+        # ブロックの描画
+        for x in range(grid_size_x):
+            for y in range(grid_size_y):
+                h = soil_amount_real_copy[x, y]
+                if h > 0:
+                    ax.bar3d(x, y, 0, 1, 1, h, color="blue", alpha=0.3)
+                elif h < 0:
+                    ax.bar3d(x, y, h, 1, 1, -h, color="red", alpha=0.3)
+        # 仮設道路の描画
+        for road in temporary_roads:
+            for start, directions in road.items():
+                for direction in directions:
+                    # dx = DIRECTIONS[direction][0]/2
+                    # dy = DIRECTIONS[direction][1]/2
+                    dx, dy = DIRECTIONS[direction]
+                    print("start",start)
+                    # print("dx",dx)
+                    # print("dy",dy)
+                    print("DIRECTIONS[direction]",DIRECTIONS[direction])
+                    middle_soil = (soil_amount_real_copy[int(start[0]), int(start[1])] +soil_amount_real_copy[int(start[0] + dx), int(start[1] + dy)])/2
+                    print("middle_point",(start[0] + dx/2,start[1] + dy/2))
+                    print("middle_soil",middle_soil)
+                    if soil_amount_real_copy[start[0], start[1]] > 0:
+                        ax.plot(
+                            [start[0] + 0.5, start[0] + 0.5 + dx/2],
+                            [start[1] + 0.5, start[1] + 0.5 + dy/2],
+                            [
+                                soil_amount_real_copy[start[0], start[1]] - 0.5,
+                                middle_soil,
+                            ],
+                            color="grey",
+                            linewidth=7,
+                            alpha=0.9,
+                        )
+                    elif soil_amount_real_copy[start[0], start[1]] <0:
+                        ax.plot(
+                            [start[0] + 0.5, start[0] + 0.5 + dx/2],
+                            [start[1] + 0.5, start[1] + 0.5 + dy/2],
+                            [
+                                soil_amount_real_copy[start[0], start[1]] + 0.5,
+                                middle_soil,
+                            ],
+                            color="grey",
+                            linewidth=7,
+                            alpha=0.9,
+                        )
+                    else:
+                        ax.plot(
+                            [start[0] + 0.5, start[0] + 0.5 + dx/2],
+                            [start[1] + 0.5, start[1] + 0.5 + dy/2],
+                            [
+                                soil_amount_real_copy[start[0], start[1]],
+                                middle_soil,
+                            ],
+                            color="grey",
+                            linewidth=7,
+                            alpha=0.9,
+                        )
+                    print("\n")
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+    ani = animation.FuncAnimation(
+        fig, animate, init_func=init_animate, frames=len(path_list) , interval=1500,repeat=False
+    )
+    # GIF保存（必要に応じて）
+    ani.save("3d_animation.gif", writer="Pillow")
+    print("after save")
+    # アニメーション表示
+    plt.show()
+    print("after show")
+
+
+plot_3d_routes(grid_size_x, grid_size_y, path_list, temporary_roads, cut_indices, fill_indices)

@@ -8,13 +8,11 @@ import time
 import copy
 # セルの土量設定
 # 土量 = np.array([-1000, -4000, -5000, 550, -500, 800, 450, 6700, 2000]).reshape((3, 3))
-temp_eff = 0.7
-v =  1/temp_eff
-tan_alpha = math.sqrt(v**2-1)
-sin_alpha = math.sqrt(v**2-1)/v
-distance = 0
-temp = [[(0, 0), (0, 1)],[(1, 1),(2, 2)],[(1, 2),(2, 1)]]
-
+# temp_eff = 0.7
+# v =  1/temp_eff
+# tan_alpha = math.sqrt(v**2-1)
+# sin_alpha = math.sqrt(v**2-1)/v
+# distance = 0
 
 
 
@@ -36,6 +34,7 @@ def earth_allocation(cut_indices, fill_indices):
                 costs[c][f] = distance
         
         return costs
+    
     
     #切土の座標と土量
     cut_indices_float = cut_indices
@@ -122,13 +121,10 @@ def earth_allocation(cut_indices, fill_indices):
     print("routes",routes)
     return routes
 
-def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y):
-    # 各セルが持つ仮設道路情報 (座標: [方向のセット])
 
-    # 移動方向（上下左右および斜め）
+def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y,temp_eff):
     DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
-    temporary_roads_copy = copy.deepcopy(temporary_roads)
     def get_distance(a, b):
         """current と neighbor のユークリッド距離を計算"""
         return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
@@ -148,17 +144,24 @@ def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y):
         current_distance = distance/2
         neighbor_distance = distance/2
         # 仮設道路がある場合
-        for temp in temporary_roads_copy:
+        for temp in temporary_roads:
             if direction_index_current in temp.get(current, set()):
                 current_distance *=  temp_eff
             if direction_index_neighbor in temp.get(neighbor, set()):
                 neighbor_distance *=  temp_eff 
         
         return current_distance + neighbor_distance
-
-
-    def astar(start, goal):
-        """A*アルゴリズムでstartからgoalへの最小コスト経路を探索"""
+    
+    def remove_temporary_roads(start, goal,temps):
+        """指定されたセル（start, goal）から仮設道路を削除"""
+        for cell in [start, goal]:
+            for temp in temps:
+                if cell in temp:
+                    del temp[cell]
+    """A*アルゴリズムでstartからgoalへの最小コスト経路を探索"""
+    def astar(start, goal,temp):
+        temp_copy =copy.deepcopy(temp)
+        # print(f"Temporary Roads Before Removal: {temp_copy}")
         open_set = []
         heapq.heappush(open_set, (0, start))
         came_from = {}
@@ -195,29 +198,28 @@ def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y):
         path.reverse()
 
         # 仮設道路を削除
-        remove_temporary_roads(start, goal)
+        remove_temporary_roads(start, goal,temp_copy)
 
-        return path, cost_so_far[goal]
+        # print(f"Temporary Roads After Removal: {temp_copy}")
 
+        return path, cost_so_far[goal],temp_copy
+    
 
-    def remove_temporary_roads(start, goal):
-        """指定されたセル（start, goal）から仮設道路を削除"""
-        for cell in [start, goal]:
-            if cell in temporary_roads_copy:
-                del temporary_roads_copy[cell]
-    path_list = []
     total_cost = 0
-
-    # 各ペアに対する最小コスト経路を計算
+    path_list = []
+    print("temporary_roads in astar",temporary_roads)
+    temp_deepcopy = copy.deepcopy(temporary_roads)
     for start, goal in start_goal_pairs:
-        path, cost = astar(start, goal)
-        # print(f"Start: {start}, Goal: {goal}")
-        # print(f"Path: {path}")
-        # print(f"Cost: {cost}\n")
-        # print(f"Temporary Roads After Removal: {temporary_roads_copy}")
-        path_list.append(path)
+        path, cost,temp_deepcopy = astar(start, goal,temp_deepcopy)
         total_cost += cost
-    return path_list, total_cost
+        path_list.append(path)
+    #     print(f"Start: {start}, Goal: {goal}")
+    #     print(f"Path: {path}")
+    #     print(f"Cost: {cost}\n")
+    # print(f"Total Cost: {total_cost}")
+    return  path_list,total_cost
+
+
 
 
 def temp_length(temp_list):
@@ -255,102 +257,82 @@ def temp_length(temp_list):
     print("total_length",total_length)
     return total_length
 
-#仮設道路がどれくらい利用されているかを計算
-def temp_usage(route_list, temp):
-    def on_segment(p:tuple, q:tuple, r:tuple) -> bool:
-            """点rが線分pq上にあるかどうかを確認する関数"""
-            if min(p[0], q[0]) <= r[0] <= max(p[0], q[0]) and min(p[1], q[1]) <= r[1] <= max(p[1], q[1]):
-                return True
-            return False
 
-    def on_line(p:tuple, q:tuple, r:tuple):
-                delta = 0.000001
-                bool = False
-                    # ベクトル pr の傾きと qr の傾きを比較,rがpqの間にあるかどうか⇒rがpq上にあるかを確認
-                if abs((r[1] - p[1]) * (q[0] - r[0]) - (r[0] - p[0]) * (q[1] - r[1])) < delta and on_segment(p, q, r):
-                    bool = True
-                return bool
-                
-
-    # 2点間の距離を計算する関数
-    def distance(point1, point2):
-        return math.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
-    
-
-    # 仮設道路の形式をチェック
-    if not (isinstance(temp, list) and len(temp) == 2 and
-            all(isinstance(point, tuple) and len(point) == 2 and
-                all(isinstance(coord, (int, float)) for coord in point)
-                for point in temp)):
-        print("仮設道路は1つである必要があります")
-        return exit(1)
-    
-    # 仮設道路の総距離を計算
-    temp_distance = distance(temp[0], temp[1])
-    
-    # 全経路で仮設道路が使われている割合を計算
-    total_temp_usage = 0
-
-    for route in route_list:
-        route_temp_usage = 0
+def calculate_temporary_road_usage(routes, temporary_roads):
+    def get_distance(a, b):
+        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+    def road_length(temp):
+        DIRECTIONS = [
+        (-1, -1),  # 0
+        (-1, 0),   # 1
+        (-1, 1),   # 2
+        (0, -1),   # 3
+        (0, 1),    # 4
+        (1, -1),   # 5
+        (1, 0),    # 6
+        (1, 1)     # 7
+        ]   
+        """
+        仮設道路の総長を計算する関数。
         
-        # 経路上の各セグメントについて距離を計算
+        Parameters:
+            temporary_roads (dict): 各座標における方向情報。
+            directions (list): 方向ベクトルのリスト。
+        
+        Returns:
+            float: 仮設道路の総長。
+        """
+        total_length = 0
+        for start, dir_set in temp.items():
+            for direction in dir_set:
+                # 各方向の移動量を取得
+                dx, dy = DIRECTIONS[direction]
+                # print("dx,dy",dx,dy)
+                # 仮設道路の長さはベクトルの長さとして計算
+                length = ((dx/2)**2 + (dy/2)**2)**0.5
+                # print("length",length)
+                total_length += length
+        # print("total_length",total_length)
+        return total_length
+    temp_length = road_length(temporary_roads)
+    total_usage = 0
+    DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    # 仮設道路データを破壊しないようにコピーを作成
+    temp_roads_copy = copy.deepcopy(temporary_roads)
+
+    for route in routes:
+        # print("temp_roads before",temp_roads_copy)
+        # print("route",route)
+        total_usage_route = 0
         for i in range(len(route) - 1):
-            segment1 = route[i]
-            segment2 = route[i + 1]
-            # print("segment1,segment2",segment1,segment2)
+            current = tuple(map(int, route[i]))  # 現在の座標
+            neighbor = tuple(map(int, route[i + 1]))  # 次の座標
+
+            # 移動方向を計算
+            direction = (neighbor[0] - current[0], neighbor[1] - current[1])
+            direction_length = get_distance(current, neighbor)
+            current_direction_index = DIRECTIONS.index(direction)
+            neighbor_direction_index = DIRECTIONS.index((-direction[0], -direction[1]))
             
-            #経路上に仮設道路上がある場合
-            if (on_line(segment1,segment2,temp[0]) and on_line(segment1,segment2,temp[1])):
-                route_temp_usage += distance(temp[0], temp[1])
-            #     print("distance",distance(temp[0], temp[1]))
-            #     print("経路上に仮設道路上がある場合")
-            # # segmetn1とsegment2が両方仮設道路上にある場合 または segment1とsegment2が仮設道路の端点と一致する場合
-            # elif((on_line(temp[0], temp[1], segment1)  and on_line(temp[0], temp[1], segment2))
-            #    or ((segment1 == temp[0] and segment2 == temp[1]) or (segment1 == temp[1] and segment2 == temp[0]))):
-            #     print("segment1とsegment2が両方仮設道路上にある場合")
-            #     route_temp_usage += distance(segment1, segment2)
-            elif(on_line(temp[0], temp[1], segment1)  and on_line(temp[0], temp[1], segment2)):
-                # print("distance",distance(segment1, segment2))
-                # print("segment1とsegment2が両方仮設道路上にある場合")
-                route_temp_usage += distance(segment1, segment2)
-            # segment1が仮設道路上にあり、segment2が仮設道路上にない場合
-            elif (on_line(temp[0], temp[1], segment1) and not on_line(temp[0], temp[1], segment2)):
-                if distance(segment2, temp[0]) < distance(segment2, temp[1]): # segment2,temp[0],segment1,temp[1]の順番で並んでいる場合
-                    route_temp_usage += distance(segment1, temp[0])
-                #     print("distance",distance(segment1, temp[0]))
-                #     print("segment2,temp[0],segment1,temp[1]の順番で並んでいる場合")
-                else: # temp[0],segment1,temp[1],segment2の順番で並んでいる場合
-                    route_temp_usage += distance(segment1, temp[1])
-                #     print("distance",distance(segment1, temp[1]))
-                #     print("temp[0],segment1,temp[1],segment2の順番で並んでいる場合")
-                # print("segment1が仮設道路上にあり、segment2が仮設道路上にない場合")
-            #segment2が仮設道路上にあり、segment1が仮設道路上にない場合
-            elif (on_line(temp[0], temp[1], segment2) and not on_line(temp[0], temp[1], segment1)):
-                if distance(segment1, temp[0]) < distance(segment1, temp[1]): # segment2,temp[0],segment1,temp[1]の順番で並んでいる場合
-                    route_temp_usage += distance(segment2, temp[0])
-                    # print("distance",distance(segment2, temp[0]))
-                    # print("segment1,temp[0],segment2,temp[1]の順番で並んでいる場合")
-                else: # temp[0],segment1,temp[1],segment2の順番で並んでいる場合
-                    route_temp_usage += distance(segment2, temp[1])
-                #     print("distance",distance(segment2, temp[1]))
-                #     print("temp[0],segment2,temp[1],segment1の順番で並んでいる場合")
-                # print("segment2が仮設道路上にあり、segment1が仮設道路上にない場合")
+            # 仮設道路の利用を確認
+            if current in temp_roads_copy and current_direction_index in temp_roads_copy[current]:
+                # print(f"{current}で仮設道路を利用")
+                total_usage_route += direction_length/2 # 長さを加算
+            if neighbor in temp_roads_copy and neighbor_direction_index in temp_roads_copy[neighbor]:
+                # print(f"{neighbor}で仮設道路を利用")
+                total_usage_route += direction_length/2 # 長さを加算
+        """指定されたセル（current, neighbor）から仮設道路を削除"""
 
-            else:
-                route_temp_usage += 0
-                # print("その他の場合")
-        # 仮設道路が使われた割合を加算
-        total_temp_usage += route_temp_usage
-
-
-    
-    # 仮設道路が使われた割合を仮設道路の距離に対して返す
-    if temp_distance == 0:
-        return 0
-    weight = total_temp_usage / temp_distance
-    return total_temp_usage / temp_distance
-
+        start = tuple(map(int, route[0]))
+        goal = tuple(map(int, route[-1]))
+        for cell in [start, goal]:
+            if cell in temp_roads_copy:
+                del temp_roads_copy[cell]
+        # print("temp_roads after",temp_roads_copy)
+        # print("total_length_route",total_length_route)
+        # print("\n")
+        total_usage += total_usage_route
+    return total_usage/temp_length
 
 def plot(grid_size_x,grid_size_y, route,cut_indices,fill_indices):  #結果の可視化(土砂割り当て)
 
@@ -529,6 +511,7 @@ def plot_route(grid_size_x,grid_size_y, path_list,temporary_roads,cut_indices,fi
     def init_animate (): #初期化関数(これがないとanimate関数のi=0が2回繰り返される)
         pass
 
+
     def draw_temporary_roads(ax,temp_list,start_point,end_point):
         # 仮設道路の描画
         #start_pointとend_point上の仮設道路は描画しない
@@ -538,10 +521,6 @@ def plot_route(grid_size_x,grid_size_y, path_list,temporary_roads,cut_indices,fi
 
         # print("modified_temporary_roads_after",temp)
         for temp in temp_list:
-            if start_point != None and end_point != None:
-                for point in [start_point, end_point]:  
-                    if point in temp:
-                        del temp[point]
             for start, directions in temp.items():
                 for direction in directions:
                     dx, dy = DIRECTIONS[direction]
@@ -555,6 +534,18 @@ def plot_route(grid_size_x,grid_size_y, path_list,temporary_roads,cut_indices,fi
                         linewidth=10,
                         alpha=0.7,
                     )
+        
+        for temp in temp_list:
+            if start_point != None and end_point != None:
+                for point in [start_point, end_point]:  
+                    if point in temp:
+                        del temp[point]
+        filtered_temp_list = []
+        for temp in temp_list:
+            if temp:  # 空でない場合のみ追加
+                filtered_temp_list.append(temp)
+        # print("filtered_temp_list",filtered_temp_list)
+        temp_list = filtered_temp_list
 
     def animate(i):
         ax.clear()

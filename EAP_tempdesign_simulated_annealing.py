@@ -93,20 +93,20 @@ def generate_neighbor(route,temp):
 
 
     usage_weights = [(road, temp_usage(route, road)) for road in temp]
-    # print("usage_weights",usage_weights)
+    print("usage_weights",usage_weights)
     # 使用量が低い道路のリストを作成
     low_usage_roads = sorted(usage_weights, key=lambda x: x[1])  # 使用量が低い順にソート
-    # print("low_usage_roads",low_usage_roads)
+    print("low_usage_roads",low_usage_roads)
     # 重みを考慮してランダムに道路を選択
     total_weight = sum(1 / (usage + 1e-6) for _, usage in low_usage_roads)  # 小さい値を追加してゼロ除算を防止
     probabilities = [(1 / (usage + 1e-6)) / total_weight for _, usage in low_usage_roads]
-    # print("total_weight",total_weight)
-    # print("probabilities",probabilities)
+    print("total_weight",total_weight)
+    print("probabilities",probabilities)
     # 確率に基づいて選択
     road_index = np.random.choice(len(low_usage_roads), p=probabilities)
-    # print("road_index",road_index)
+    print("road_index",road_index)
     selected_road = low_usage_roads[road_index][0]
-    # print("selected_road",selected_road)
+    print("selected_road",selected_road)
     road_probability_list =[]
     for i in range(len(temp)):
         road_probability_list.append([low_usage_roads[i],probabilities[i]])
@@ -185,9 +185,10 @@ def simulated_annealing(temp, initial_temp, final_temp, alpha, max_iter, cut_ind
 # 仮設道路のデザイン
 temp = [[(1,3),(2,3)],[(3,0),(3,1)],[ (0, 0), (0, 1)]]
 
-cut_indices = [[(1, 0),2],[(1, 2),2],[(2, 0),2],[(2, 1),2],[(2, 2),2],[(2, 3),2],[(3, 0),2],[(3, 1),2],[(3, 3),3]]
+#切土の座標と土量
+cut_indices = [[(1, 0),1],[(1, 2),1],[(2, 0),1],[(2, 1),1],[(2, 2),1],[(2, 3),1],[(3, 0),1],[(3, 1),1],[(3, 3),2]]
 #盛土の座標と土量
-fill_indices = [[(0, 0),3],[(0, 1),2],[(0, 2),2],[(0, 3),2],[(1, 3),3],[(1, 1),3],[(3, 2),4]]
+fill_indices = [[(0, 0),2],[(0, 1),1],[(0, 2),1],[(0, 3),1],[(1, 3),2],[(1, 1),1],[(3, 2),2]]
 
 cut_indices_float = []
 for i in range(len(cut_indices)):
@@ -249,11 +250,14 @@ grid_size_y = 4
 
 plot(grid_size_x,grid_size_y,optimized_route,optimized_solution, cut_indices, fill_indices)
 # ani.save('animation.gif', writer='imagemagick')
-current_score_list = []
-for i in range(len(best_solution_flow)):
-    current_score_list.append(current_solution_flow[i][0])
+current_score_list = [current_solution_flow[i][0] for i in range(len(current_solution_flow))]
+# Best Solution Scoreをリスト化
+best_score_list = [best_solution_flow[i][0] for i in range(len(best_solution_flow))]
+
 # グラフのプロット
-plt.plot(current_score_list, marker='x',label="Current Solution Score")  # marker='x' で点も表示
+plt.figure(figsize=(10, 6))  # グラフサイズを設定
+plt.plot(current_score_list, marker='x', label="Current Solution Score", color='blue')  # Current Solution Scoreをプロット
+plt.plot(best_score_list, marker='o', label="Best Solution Score", color='orange') 
 plt.xlabel("Index")  # 横軸ラベル
 plt.ylabel("Score")  # 縦軸ラベル
 plt.title("Solution Score")  # タイトル
