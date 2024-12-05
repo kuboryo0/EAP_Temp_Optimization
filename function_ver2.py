@@ -14,7 +14,25 @@ import copy
 # sin_alpha = math.sqrt(v**2-1)/v
 # distance = 0
 
+def validate_dict(data):
+    """
+    辞書が以下の形式を満たしているかを確認する:
+    - キー: (x, y) の形式 (タプル)
+    - 値: 0～7 の整数のみを要素に持つセット
+    """
+    if not isinstance(data, dict):
+        return False, "Input is not a dictionary."
 
+    for key, value in data.items():
+        # キーがタプルで2つの整数を持つ形式か確認
+        if not (isinstance(key, tuple) and len(key) == 2 and all(isinstance(coord, int) for coord in key)):
+            return False, f"Invalid key: {key} (must be a tuple of two integers)."
+
+        # 値がセットで0～7の整数のみを含むか確認
+        if not (isinstance(value, set) and all(isinstance(v, int) and 0 <= v <= 7 for v in value)):
+            return False, f"Invalid value for key {key}: {value} (must be a set of integers between 0 and 7)."
+
+    return True, "Dictionary is valid."
 
 
 def earth_allocation(cut_indices, fill_indices):
@@ -122,22 +140,26 @@ def earth_allocation(cut_indices, fill_indices):
     return routes
 
 
-def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y,temp_eff):
+def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y,temp_eff,soil_amount):
     DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
-    def get_distance(a, b):
-        """current と neighbor のユークリッド距離を計算"""
-        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+    def get_distance(a, b,soil):
+        """current と neighbor の3次元距離を計算"""
+        # print("a",a)
+        # print("b",b)
+        horizontal_distance = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        vertical_distance = abs(soil[int(a[0])][int(a[1])] - soil[int(b[0])][int(b[1])])
+        return (horizontal_distance**2 + vertical_distance**2)**0.5
 
 
-    def heuristic(a, b):
+    def heuristic(a, b,soil_amount):
         """ユークリッド距離のヒューリスティック関数"""
-        return temp_eff * get_distance(a, b)
+        return temp_eff * get_distance(a, b,soil_amount)
 
 
-    def get_cost(current, neighbor):
+    def get_cost(current, neighbor,soil_amount):
         """移動コストを計算"""
-        distance = get_distance(current, neighbor)
+        distance = get_distance(current, neighbor,soil_amount)
         direction = (neighbor[0] - current[0], neighbor[1] - current[1])
         direction_index_current = DIRECTIONS.index(direction)
         direction_index_neighbor = DIRECTIONS.index((-direction[0], -direction[1]))
@@ -158,9 +180,16 @@ def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y,temp_eff):
             for temp in temps:
                 if cell in temp:
                     del temp[cell]
+    
+    def change_soil(start,goal,soil_amount):
+        """指定されたセル（start, goal）から土量を変更"""
+        soil_amount[int(start[0])][int(start[1])] -= 1
+        soil_amount[int(goal[0])][int(goal[1])] += 1
+
     """A*アルゴリズムでstartからgoalへの最小コスト経路を探索"""
-    def astar(start, goal,temp):
+    def astar(start, goal,temp,soil_amount):
         temp_copy =copy.deepcopy(temp)
+        soil_amount_copy = copy.deepcopy(soil_amount)
         # print(f"Temporary Roads Before Removal: {temp_copy}")
         open_set = []
         heapq.heappush(open_set, (0, start))
@@ -180,11 +209,11 @@ def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y,temp_eff):
                 if not (0 <= neighbor[0] < grid_size_x and 0 <= neighbor[1] < grid_size_y):
                     continue
 
-                new_cost = cost_so_far[current] + get_cost(current, neighbor)
+                new_cost = cost_so_far[current] + get_cost(current, neighbor,soil_amount_copy)
 
                 if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
                     cost_so_far[neighbor] = new_cost
-                    priority = new_cost + heuristic(goal, neighbor)
+                    priority = new_cost + heuristic(goal, neighbor,soil_amount_copy)
                     heapq.heappush(open_set, (priority, neighbor))
                     came_from[neighbor] = current
 
@@ -199,30 +228,45 @@ def a_star(start_goal_pairs,temporary_roads,grid_size_x,grid_size_y,temp_eff):
 
         # 仮設道路を削除
         remove_temporary_roads(start, goal,temp_copy)
-
+        change_soil(start,goal,soil_amount_copy)
         # print(f"Temporary Roads After Removal: {temp_copy}")
 
-        return path, cost_so_far[goal],temp_copy
+        return path, cost_so_far[goal],temp_copy,soil_amount_copy
     
 
     total_cost = 0
     path_list = []
-    print("temporary_roads in astar",temporary_roads)
+    # print("temporary_roads in astar",temporary_roads)
     temp_deepcopy = copy.deepcopy(temporary_roads)
+    soil_amount_deepcopy = copy.deepcopy(soil_amount)
     for start, goal in start_goal_pairs:
-        path, cost,temp_deepcopy = astar(start, goal,temp_deepcopy)
+        # print("soil_amount before",soil_amount_deepcopy)
+        path, cost,temp_deepcopy,soil_amount_deepcopy = astar(start, goal,temp_deepcopy,soil_amount_deepcopy)
         total_cost += cost
         path_list.append(path)
-    #     print(f"Start: {start}, Goal: {goal}")
-    #     print(f"Path: {path}")
-    #     print(f"Cost: {cost}\n")
+        # print(f"Start: {start}, Goal: {goal}")
+
+        # print(f"Path: {path}")
+        # print(f"Cost: {cost}\n")
     # print(f"Total Cost: {total_cost}")
     return  path_list,total_cost
 
+def temporary_road_check(temporary_roads,grid_size_x,grid_size_y):
+    DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    for temp in temporary_roads:
+        for start, directions in temp.items():
+            for direction in directions:
+                if direction not in range(8):
+                    print("direction error")
+                    exit()
+                neighbor_x = start[0] + DIRECTIONS[direction][0]
+                neighbor_y = start[1] + DIRECTIONS[direction][1]
+                if not(0<=neighbor_x<grid_size_x and 0<=neighbor_y<grid_size_y):
+                    print("neighbor error")
+                    exit()
 
 
-
-def temp_length(temp_list):
+def temp_length(temp_list,soil_amount):
     DIRECTIONS = [
     (-1, -1),  # 0
     (-1, 0),   # 1
@@ -251,17 +295,21 @@ def temp_length(temp_list):
                 dx, dy = DIRECTIONS[direction]
                 # print("dx,dy",dx,dy)
                 # 仮設道路の長さはベクトルの長さとして計算
-                length = ((dx/2)**2 + (dy/2)**2)**0.5
+                horizontal_length = ((dx/2)**2 + (dy/2)**2)**0.5
+                vertical_length = abs(soil_amount[int(start[0])][int(start[1])] - soil_amount[int(start[0] + dx)][int(start[1] + dy)])/2
                 # print("length",length)
-                total_length += length
+                total_length += (horizontal_length**2+vertical_length**2)**0.5
     print("total_length",total_length)
     return total_length
 
-
-def calculate_temporary_road_usage(routes, temporary_roads):
-    def get_distance(a, b):
-        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
-    def road_length(temp):
+#要修正
+def calculate_temporary_road_usage(routes, temporary_roads,soil_amount):
+    def get_distance(a, b,soil):
+        """current と neighbor の3次元距離を計算"""
+        horizontal_distance = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        vertical_distance = abs(soil[int(a[0])][int(a[1])] - soil[int(b[0])][int(b[1])])
+        return (horizontal_distance**2 + vertical_distance**2)**0.5
+    def road_length(temp,soil_amount):
         DIRECTIONS = [
         (-1, -1),  # 0
         (-1, 0),   # 1
@@ -282,6 +330,7 @@ def calculate_temporary_road_usage(routes, temporary_roads):
         Returns:
             float: 仮設道路の総長。
         """
+        validate_dict(temp)
         total_length = 0
         for start, dir_set in temp.items():
             for direction in dir_set:
@@ -289,16 +338,20 @@ def calculate_temporary_road_usage(routes, temporary_roads):
                 dx, dy = DIRECTIONS[direction]
                 # print("dx,dy",dx,dy)
                 # 仮設道路の長さはベクトルの長さとして計算
-                length = ((dx/2)**2 + (dy/2)**2)**0.5
+                horizontal_length = ((dx/2)**2 + (dy/2)**2)**0.5
+                # print("start",start)
+                # print("dx,dy",dx,dy)
+                vertical_length = abs(soil_amount[int(start[0])][int(start[1])] - soil_amount[int(start[0] + dx)][int(start[1] + dy)])/2
                 # print("length",length)
-                total_length += length
+                total_length += (horizontal_length**2+vertical_length**2)**0.5
         # print("total_length",total_length)
         return total_length
-    temp_length = road_length(temporary_roads)
+    soil_amount_copy = copy.deepcopy(soil_amount)
+    temp_roads_copy = copy.deepcopy(temporary_roads)
+    temp_length = road_length(temporary_roads,soil_amount_copy)
     total_usage = 0
     DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
     # 仮設道路データを破壊しないようにコピーを作成
-    temp_roads_copy = copy.deepcopy(temporary_roads)
 
     for route in routes:
         # print("temp_roads before",temp_roads_copy)
@@ -310,7 +363,7 @@ def calculate_temporary_road_usage(routes, temporary_roads):
 
             # 移動方向を計算
             direction = (neighbor[0] - current[0], neighbor[1] - current[1])
-            direction_length = get_distance(current, neighbor)
+            direction_length = get_distance(current, neighbor,soil_amount_copy)
             current_direction_index = DIRECTIONS.index(direction)
             neighbor_direction_index = DIRECTIONS.index((-direction[0], -direction[1]))
             
@@ -328,10 +381,14 @@ def calculate_temporary_road_usage(routes, temporary_roads):
         for cell in [start, goal]:
             if cell in temp_roads_copy:
                 del temp_roads_copy[cell]
+        soil_amount_copy[int(start[0])][int(start[1])] -= 1
+        soil_amount_copy[int(goal[0])][int(goal[1])] += 1
         # print("temp_roads after",temp_roads_copy)
         # print("total_length_route",total_length_route)
         # print("\n")
         total_usage += total_usage_route
+    # print("total_usage",total_usage)
+    # print("temp_length",temp_length)
     return total_usage/temp_length
 
 def plot(grid_size_x,grid_size_y, route,cut_indices,fill_indices):  #結果の可視化(土砂割り当て)
@@ -638,5 +695,82 @@ def plot_route(grid_size_x,grid_size_y, path_list,temporary_roads,cut_indices,fi
     soil_amount_real_copy_copy = soil_amount_real_copy.copy()
     soil_amount_copy_copy = soil_amount_copy.copy()
     modified_temporary_roads_copy = copy.deepcopy(modified_temporary_roads)
+    # アニメーションを表示
+    plt.show()
+
+
+
+
+def plot_solution_flow(grid_size_x,grid_size_y,roads_flow,cut_indices,fill_indices):  #結果の可視化（経路）
+
+    # 格子点の座標を生成
+    x = [i for i in range(grid_size_x)]
+    y = [i for i in range(grid_size_y)]
+    X, Y = np.meshgrid(x, y)
+
+    DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    
+    # 仮設道路の情報をコピーして操作
+    # modified_temporary_roads_list = {
+    #     key: directions.copy() for key, directions in temporary_roads.items()
+    # }
+    roads_flow_copy = copy.deepcopy(roads_flow)
+
+    # プロット用の格子点を設定
+    x_coords = X.flatten()
+    y_coords = Y.flatten()
+
+    # 土量マトリックスを作成（仮に色付けのためのデータを用意）
+    soil_amount = np.zeros((grid_size_y, grid_size_x))
+    # print("max_soil",max_soil)
+    for [(i, j),k] in cut_indices:
+        soil_amount[int(j), int(i)] = 1
+    for [(i, j),k] in fill_indices:
+        soil_amount[int(j),int(i)] = 0
+    soil_amount_copy = soil_amount.copy()
+
+    soil_amount_real = np.zeros((grid_size_x, grid_size_y))
+    for [(i, j),k] in cut_indices:
+        soil_amount_real[int(j), int(i)] = k
+    for [(i, j),k] in fill_indices:
+        soil_amount_real[int(j),int(i)] = -k
+    # print("soil_amount",soil_amount)
+    soil_amount_real_copy = soil_amount_real.copy()
+
+    def init_animate (): #初期化関数(これがないとanimate関数のi=0が2回繰り返される)
+        pass
+
+    def animate(i):
+        ax.clear()
+        temp_list = roads_flow[i][1]
+        for temp in temp_list:
+            for start, directions in temp.items():
+                for direction in directions:
+                    dx, dy = DIRECTIONS[direction]
+                    end = (start[0] + dx/2, start[1] + dy/2)
+                    adjusted_start = (start[0] + 0.5, start[1] + 0.5)
+                    adjusted_end = (end[0] + 0.5, end[1] + 0.5)
+                    ax.plot(
+                        [adjusted_start[0], adjusted_end[0]],
+                        [adjusted_start[1], adjusted_end[1]],
+                        color="grey",
+                        linewidth=10,
+                        alpha=0.7,
+                    )
+        
+        # グリッドの描画（背景）
+        ax.pcolormesh(soil_amount, edgecolors='gray', linewidth=2, cmap='viridis', shading='flat', alpha=0.2)
+        ax.scatter(x_coords+0.5, y_coords+0.5, color='blue', marker='o')  # 格子点のプロット
+        # 格子点のラベルを表示（x, y方向に0.5ずらす）
+        for x_val, y_val in zip(x_coords, y_coords):
+            ax.text(x_val + 0.5, y_val + 0.4, f'{int(soil_amount_real_copy[y_val][x_val])}', fontsize=12, ha='center', va='top')
+                       
+
+    # アニメーションの準備
+    fig, ax = plt.subplots(figsize=(8, 6))
+    # アニメーションの実行
+    ani = animation.FuncAnimation(fig, animate,init_func=init_animate, frames=len(roads_flow) , interval=500, repeat=False,blit=False)
+    # GIFや動画として保存したい場合
+    ani.save('road_flow.gif', writer='Pillow')
     # アニメーションを表示
     plt.show()

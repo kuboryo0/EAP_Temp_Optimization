@@ -1,355 +1,306 @@
-import pulp
+#simulated annealingを用いた仮設道路デザインの最適化
+#地形変化も考慮。土砂の割り当て方は事前に計算してから仮設道路の最適化を行う
 import numpy as np
+import random
+import pulp
+import time
+import math
+import copy
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import math
-import time
-import copy
-# セルの土量設定
-# 土量 = np.array([-1000, -4000, -5000, 550, -500, 800, 450, 6700, 2000]).reshape((3, 3))
-temp_eff = 0.5
-v =  1/temp_eff
-tan_alpha = math.sqrt(v**2-1)
-sin_alpha = math.sqrt(v**2-1)/v
-distance = 0
-# 距離コストの計算
+from function_ver2 import earth_allocation,a_star,temp_length,calculate_temporary_road_usage,temporary_road_check,plot_route,plot_solution_flow
 
-def calculate_cost(cut_indices, fill_indices,temp):
-
-    def on_segment(p:tuple, q:tuple, r:tuple) -> bool:
-            """点rが線分pq上にあるかどうかを確認する関数"""
-            if min(p[0], q[0]) < r[0] < max(p[0], q[0]) and min(p[1], q[1]) < r[1] < max(p[1], q[1]):
-                return True
-            return False
+# from function_ver2 import plot_route
 
 
-    def is_intersect(p1:float, p2:float, q1:float, q2:float) -> bool:
-        def orientation(p:tuple, q:tuple, r:tuple) -> int:
-            """3点の並び順を計算。0: コリニア（同一直線上）, 1: 時計回り, 2: 反時計回り"""
-            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
-            if val == 0:
-                return 0  # コリニア
-            elif val > 0:
-                return 1  # 時計回り
-            else:
-                return 2  # 反時計回り
 
-        
-
-        # 4つの点 p1, p2, q1, q2 の並びを取得
-        o1 = orientation(p1, p2, q1)
-        o2 = orientation(p1, p2, q2)
-        o3 = orientation(q1, q2, p1)
-        o4 = orientation(q1, q2, p2)
-
-        # 交差判定
-        # 線分が交差する一般的な場合
-        if o1 != o2 and o3 != o4:
-            return True
-
-        # 特殊なケース：線分がコリニアで、交差する場合
-        if o1 == 0 and on_segment(p1, p2, q1):
-            return True
-        if o2 == 0 and on_segment(p1, p2, q2):
-            return True
-        if o3 == 0 and on_segment(q1, q2, p1):
-            return True
-        if o4 == 0 and on_segment(q1, q2, p2):
-            return True
-
-        return False
-
-    def calculate_distance(i:float, j:float, k:float, l:float)->float:
-        return np.sqrt((i - k)**2 + (j - l)**2)
-
-    def calculate_intersection(p1:float, p2:float, q1:float, q2:float) -> tuple:
-        """p1, p2: 1つ目の仮設道路, q1, q2: 2つ目の仮設道路の端点"""
-        x1, y1 = p1
-        x2, y2 = p2
-        x3, y3 = q1
-        x4, y4 = q2
-
-        # 行列式を使って交点を計算
-        denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if denominator == 0:
-            print("denominator == 0")
-            return None  # 交差しない（平行または同一線上）
-
-        intersect_x = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denominator
-        intersect_y = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denominator
-
-        return (intersect_x, intersect_y)
+DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
 
-    #ある点(x,y)から仮設道路(temp_i)に角度alphaで下した点の座標を求める
-    #また、その点から仮設道路までの距離を返す
-    def shortest_point_to_road(x:float,y:float,temp_i:list):
-        if not (isinstance(temp_i, list) and len(temp_i) == 2 and
-            all(isinstance(point, tuple) and len(point) == 2 and 
-                all(isinstance(coord, (int, float)) for coord in point) 
-                for point in temp_i)):
-            print("shortest_point_to_road error:temp_iは[(p1,q1),(p2,q2)]の型で入力してください")
-            return None,None
-        point = []
-        if temp_i[0][0] == temp_i[1][0]: #仮設道路が垂直の場合
-            a = temp_i[0][0]
-            d = abs(x-a)
-            if(x != a):
-                point1_x = a
-                point1_y = y + d/tan_alpha
-                point2_x = a
-                point2_y = y - d/tan_alpha
-                point.append((point1_x,point1_y))
-                point.append((point2_x,point2_y))
-                distance = d/sin_alpha
-            else:
-                point.append((x,y))
-                distance = 0
-        else:
-            m = (temp_i[1][1]-temp_i[0][1])/(temp_i[1][0]-temp_i[0][0]) 
-            n = (temp_i[0][1]*temp_i[1][0]-temp_i[0][0]*temp_i[1][1])/(temp_i[1][0]-temp_i[0][0])
-            beta = math.atan(m)
-            d = abs(m*x-y+n)/math.sqrt(m**2+1) 
-            #(x,y)から仮設道路に角度alphaで下した2つの点(point1とpoint2)の座標を求める
-            if (y > m*x+n): #(x,y)が仮設道路(y = mx+n)より上にある場合
-                point1_x = x + d*(math.cos(beta)/tan_alpha+math.sin(beta))
-                point1_y = y - d*(math.cos(beta)-math.sin(beta)/tan_alpha)
-                point2_x = x - d*(math.cos(beta)/tan_alpha-math.sin(beta))
-                point2_y = y - d*(math.cos(beta)+math.sin(beta)/tan_alpha)
-                point.append((point1_x,point1_y))
-                point.append((point2_x,point2_y))
-                distance = calculate_distance(x,y,point1_x,point1_y)
-            elif (y < m*x+n): #(x,y)が仮設道路(y = mx+n)より下にある場合
-                point1_x = x + d*(math.cos(beta)/tan_alpha-math.sin(beta))
-                point1_y = y + d*(math.cos(beta)+math.sin(beta)/tan_alpha)
-                point2_x = x - d*(math.cos(beta)/tan_alpha+math.sin(beta))
-                point2_y = y + d*(math.cos(beta)-math.sin(beta)/tan_alpha)
-                point.append((point1_x,point1_y))
-                point.append((point2_x,point2_y))
-                distance = calculate_distance(x,y,point1_x,point1_y)
-            else: # (x,y)が仮設道路上にある場合
-                point.append((x,y))
-                distance = 0
-        #pointに含まれている座標が仮設道路上にあるかどうかを確認
-        for i in range(len(point)):
-            if not(on_segment(temp_i[0],temp_i[1],point[i])):
-                point[i] = None
-        return point,distance
+# 評価関数
+def evaluate_design(temporary_roads,soil_amount):
+    temp_copy1 = copy.deepcopy(temporary_roads)
+    temp_copy2 = copy.deepcopy(temporary_roads)
+    "工事作業（時間依存）のコスト"
+    #定数の値
+    grid_length =150 # 1マスの１辺の長さ(m)
+    volume_unit_truck = 40 # トラック1台あたりの土砂輸送量(m3)
+    depth_unit = 1 #土量1単位の深さ(m)
+    speed_rough_road = 24 # 未舗装道路の速度(km/h)
+    speed_paved_road = 36 # 舗装道路の速度(km/h)
+    temp_eff = speed_rough_road/speed_paved_road # 仮設道路の効率
+    work_eff = 0.75 # 作業効率
+    truck_num = 1 # トラックの台数
+    cost_hour = 2000# トラック1台1時間あたりのコスト($/h)
+    #コスト計算
+    route,cost1 = a_star(allocation,temp_copy1,grid_size_x,grid_size_y,temp_eff,soil_amount)
+    print("運搬距離コスト",cost1)
+    # print("cost1",cost1)
+    soil_volume =  grid_length**2 * depth_unit # 運搬する土砂の総量(m3)
+    # print("soil_volume",soil_volume)
+    time_average = cost1*grid_length / (speed_rough_road*1000) # 1台トラックの所要時間(h) 
+    # print("time_average",time_average)
+    cost_construction = cost_hour * soil_volume/(truck_num * volume_unit_truck) * time_average / work_eff # 作業コスト($)
+    "仮設道路の建設にかかるコスト"
+    #定数の値
+    construction_temp = 17.5 # 仮設道路の建設単位長さあたりのコスト($/m)
+    #コスト計算
+    cost2 = temp_length(temp_copy2,soil_amount)
+    print("仮設道路の長さ",cost2)
+    cost_construction_temp = cost2 * construction_temp * grid_length# 仮設道路の建設コスト($)
+    #総コスト
+    total_cost = cost_construction + cost_construction_temp
 
-    # 重複を取り除く関数
-    def remove_duplicates(temp_list):
-        unique_points = set()  # ユニークな座標を保持するセット
-        cleaned_temp_list = []
-
-        for sublist in temp_list:
-            cleaned_sublist = []
-            for item in sublist:
-                if isinstance(item, tuple):  # 座標がタプルの場合
-                    if item not in unique_points:
-                        unique_points.add(item)
-                        cleaned_sublist.append(item)
-                elif isinstance(item, list):  # 内部リストの場合
-                    unique_inner_points = []
-                    for inner_item in item:
-                        if isinstance(inner_item, tuple) and inner_item not in unique_points:
-                            unique_points.add(inner_item)
-                            unique_inner_points.append(inner_item)
-                    cleaned_sublist.append(unique_inner_points)  # ユニークな内側のリストを追加
-                else:
-                    cleaned_sublist.append(item)  # Noneや他の値はそのまま追加
-            cleaned_temp_list.append(cleaned_sublist)
-
-        return cleaned_temp_list
+    print("cost_construction:$",cost_construction)
+    print("cost_construction_temp:$",cost_construction_temp)
+    print("total_cost:$",total_cost)
+    return route,total_cost
 
 
-    distance = 0
+def generate_neighbor(route,temp,soil_amount,grid_size_x=4,grid_size_y=4):
+    # def can_add_to_road_list(road_list):    #仮設道路全てに対して、道路を追加できるかを判定
+    #     canAdd_road = False
+    #     road_list = []
+    #     for road in road_list:
+    #         if can_add_to_road(road):
+    #             canAdd_road = True
+    #             road_list.append(road)
+    #     return canAdd_road,road_list
+    def can_add_to_road(road):    #道路一本に座標を追加できるかを判定
+        canAdd_coord = False
+        for coord in road:
+            if can_add_to_coord(coord)[0]:
+                canAdd_coord = True
+                break
+        return canAdd_coord
+    def can_add_to_coord(coord,direction_set):    #座標に対して新方向に道を追加できるかを判定
+        canAdd_direction = False
+        for direction in range(8):
+            if 0<= coord[0] + DIRECTIONS[direction][0] <grid_size_x and 0<=coord[1] + DIRECTIONS[direction][1] <grid_size_y and not direction in direction_set:
+                canAdd_direction = True
+                break
+        return canAdd_direction
+
+
+    # 新規仮設道路のデザインを生成
+    temp_copy = copy.deepcopy(temp)
+    filtered_temp = [road for road in temp_copy if road]
+    temp_copy = filtered_temp
+    print("temp before",temp_copy)
     
-    temp_number = len(temp)
-    temp_list = [] #各仮設道路の端点、交点の座標を格納するリスト(交点がない場合はNoneを格納)
-    #交点の存在の確認
-    for i in range(temp_number):
-        distance_list_tempi = [temp[i][0],temp[i][1]]
-        # for k in range(temp_number):
-        #     distance_list_tempi.insert(-1,None)
-        for j in range(temp_number):
-            if(i!= j):
-                if is_intersect(temp[i][0],temp[i][1],temp[j][0],temp[j][1]): 
-                    distance_list_tempi.append(calculate_intersection(temp[i][0],temp[i][1],temp[j][0],temp[j][1]))
-        temp_list.append(distance_list_tempi)
+    # 仮設道路の使用量を計算
+    usage_weights = []
+    for i in range(len(temp_copy)):
+        usage = calculate_temporary_road_usage(route, temp_copy[i],soil_amount)
+        # print("temp[i]",temp[i])
+        usage_weights.append((temp_copy[i], usage))
+    print("usage_weights",usage_weights)
+    # 使用量が低い道路のリストを作成
+    low_usage_roads = sorted(usage_weights, key=lambda x: x[1])  # 使用量が低い順にソート
+    # print("low_usage_roads",low_usage_roads)
+    # 使用量が0の道路を削除
+    low_usage_roads = [road for road in low_usage_roads if road[1] > 0]
+    # print("low_usage_roads after filtering:", low_usage_roads)
+    # tempから使用量が0だった道路を削除
+    remaining_roads = [road for road, _ in low_usage_roads]  # low_usage_roadsに残った道路を抽出
+    temp_copy = [road for road in temp_copy if road in remaining_roads]
+    print("temp after filtering:", temp_copy)
 
-
-    print("端点のみのリスト",temp_list,"\n")
-
-
-
-
-    #各仮設道路の端点、交点から別の仮設道路に角度alphaで下した点を下す
-    additional_point = [[] for _ in range(temp_number)] #各仮設道路の端点・交点から別の仮設道路に角度alphaで下した点を格納するリスト
-    for i in range(temp_number):
-        for j in range(len(temp_list[i])):
-            if temp_list[i][j] is not None and isinstance(temp_list[i][j], tuple):
-                for k in range(temp_number):
-                    if k != i: 
-                        point,distance = shortest_point_to_road(temp_list[i][j][0],temp_list[i][j][1],temp[k])
-                        # print(f"{i}番目の仮設道路の{j}番目の座標{temp_list[i][j]}から{k}番目の仮設道路に下した座標:",point)
-                        for l in range(len(point)):
-                            if point[l] != None and distance != 0:
-                                # additional_point_tempi.append(point[l]) #下した点を追加
-                                additional_point[k].append(point[l])
-    # print("additional_point",additional_point)
-    additional_point_cleaned = remove_duplicates(additional_point)
-    # print("additional_point_cleaned",additional_point_cleaned)
-    for k in range(len(temp_list)):
-        if isinstance(additional_point_cleaned[k], (list,tuple)) and len(additional_point_cleaned[k]) != 0:
-            for l in range(len(additional_point_cleaned[k])):
-                temp_list[k].insert(-1,additional_point[k][l])
-
-
-    # for i in range(len(temp_list)):
-    #     print(f"temp_list[{i}])",temp_list[i],"\n")
-
-    temp_list_cleaned = [list(filter(lambda x: x is not None, sublist)) for sublist in temp_list]
-    # print("交点、端点、角度αで下した点のリスト",temp_list_cleaned)
-
-
-    #startとgoalを加えて最短コストをWarshall-Floydを使って計算
-
-    def calculate_distance(i:float, j:float, k:float, l:float)->float:
-        return np.sqrt((i - k)**2 + (j - l)**2)
-
-
-    # Warshall-Floyd法によって仮設道路を用いた最短距離を計算最短
-    def Warshall_Floyd(temp:list):
-        point_number = sum([len(temp[i]) for i in range(len(temp))])
-        distance = np.zeros((point_number,point_number))  
-        for i in range(len(temp)):
-            for j in range(len(temp[i])):
-                index_ij = sum([len(temp[k]) for k in range(i)]) + j
-                for k in range(len(temp)):
-                    for l in range(len(temp[k])):
-                        index_kl = sum([len(temp[m]) for m in range(k)]) + l
-                        if i == k:
-                            # distance[index_ij][index_kl] = math.sqrt((temp[i][j][0] - temp[k][l][0])**2 + (temp[i][j][1] - temp[k][l][1])**2) * temp_eff
-                            distance[index_ij][index_kl] = calculate_distance(temp[i][j][0],temp[i][j][1],temp[k][l][0],temp[k][l][1]) * temp_eff
-                        else:
-                            distance[index_ij][index_kl] = calculate_distance(temp[i][j][0],temp[i][j][1],temp[k][l][0],temp[k][l][1])
-        
-        pre_point = np.full((point_number, point_number), [-1])  # 経由点を記録する配列
-        for i in range(point_number):
-            for j in range(point_number):
-                pre_point[i][j] = i
-        # for i in range(len(distance)):
-        #      print(f"distance[{i}]",distance[i])
-        # print("\n")
-        for k in range(point_number):
-            for i in range(point_number):
-                for j in range(point_number):
-                    if distance[i][j] > distance[i][k] + distance[k][j]:
-                        pre_point[i][j] = pre_point[k][j]
-                    distance[i][j] = min(distance[i][j], distance[i][k] + distance[k][j])
-
-        # for i in range(len(distance)):
-        #      print(f"distance[{i}]",distance[i])
-        return distance[0][-1],pre_point
-
-
-
-    #全ての切土、盛土の組み合わせに対して最短経路とそのコストを計算
-    def shortest_route_search(cut_indicies, fill_indices,temp_list_cleaned):
-        cost = np.zeros((len(cut_indices),len(fill_indices)))
-        pre_point_matrix = []  # 経由点を記録する配列
-        for i in range(len(cut_indices)):
-            for j in range(len(fill_indices)):
-                temp_list_cleaned_copy_ij = copy.deepcopy(temp_list_cleaned)
-                
-
-                
-                #cut_indices[i][0]から各仮設道路に角度alphaで下した点をtemp_list_cleaned_copy_ijに追加
-                for k in range(len(temp_list_cleaned)):
-                    temp_k = [temp_list_cleaned_copy_ij[k][0],temp_list_cleaned_copy_ij[k][1]]
-                    point = shortest_point_to_road(cut_indices[i][0][0],cut_indices[i][0][1],temp_k)[0]
-                    if point != None:
-                        for l in range(len(point)):
-                            if point[l] != None:
-                                temp_list_cleaned_copy_ij[k].insert(-1,point[l])
-                
-
-                #cut_indices[i]とfill_indices[j]をtemp_list_cleaned_copy_ijに追加
-                temp_list_cleaned_copy_ij.insert(0,[cut_indices[i][0]])
-                temp_list_cleaned_copy_ij.append([fill_indices[j][0]])
-
-                print(f"{cut_indices[i]}の切土から{fill_indices[j]}の盛土までの最短経路を計算")
-                print("temp_list_cleaned",temp_list_cleaned)
-                print("temp_list_cleaned_copy_ij",temp_list_cleaned_copy_ij)
-                cost[i][j],pre_point_matrix_value = Warshall_Floyd(temp_list_cleaned_copy_ij)
-                print("pre_point_matrix_value",pre_point_matrix_value)
-                pre_point_matrix.append(path_search(pre_point_matrix_value,temp_list_cleaned_copy_ij))
-        return cost,pre_point_matrix
-    # print("temp_list_cleaned after",temp_list_cleaned)
-
-
-    #経路のindexのリストであるpre_pointを座標リストに整理
-    def path_search(pre_point,temp_list_cleaned_copy_ij):
-        print("pre_point",pre_point)
-        print(len(pre_point))
-        print("\n")
-
-        def find_path(pre_point, start, end):
-            path = [start]
-            while start != end:
-                path.insert(1,end)
-                end = pre_point[start][end]
-            return path
-        def clear_online(route):
-            delta = 0.000001
-            route_copy = copy.deepcopy(route)
+    if len(temp_copy) == 0 or random.random() < 0.15 :  # 仮設道路なしor15%の確率で道路を追加
+        print("道路を追加")
+        new_temporary_road = {}
+        coord = (random.randint(0, 3), random.randint(0, 3))  # ランダムな座標
+        while True:
+            new_direction_index = random.randint(0, len(DIRECTIONS) - 1)
+            # print("new_direction_index",new_direction_index)
+            # print("DIRECTIONS[new_direction_index]",DIRECTIONS[new_direction_index])
+            # print("new_coord",coord[0]+  DIRECTIONS[new_direction_index][0], coord[1]+  DIRECTIONS[new_direction_index][1])
+            if  0 <= coord[0]+  DIRECTIONS[new_direction_index][0] <= grid_size_x-1 and 0 <= coord[1]+ DIRECTIONS[new_direction_index][1] <= grid_size_y-1:
+                new_neighbor_coord = (coord[0]+  DIRECTIONS[new_direction_index][0], coord[1]+  DIRECTIONS[new_direction_index][1])
+                break
+        new_temporary_road[coord] = {new_direction_index}
+        neighbor_index = DIRECTIONS.index((-DIRECTIONS[new_direction_index][0], -DIRECTIONS[new_direction_index][1]))
+        new_temporary_road[new_neighbor_coord] = {neighbor_index}
+        print("new_temporary_road",new_temporary_road)
+        temp_copy.append(new_temporary_road)
+    else:
+        # 重みを考慮してランダムに道路を選択
+        total_weight = sum(1 / (usage + 1e-6) for _, usage in low_usage_roads)  # 小さい値を追加してゼロ除算を防止
+        probabilities = [(1 / (usage + 1e-6)) / total_weight for _, usage in low_usage_roads]
+        # print("total_weight",total_weight)
+        # print("probabilities",probabilities)
+            # 確率に基づいて選択
+        road_index = np.random.choice(len(low_usage_roads), p=probabilities)
+        # print("road_index",road_index)
+        selected_road = low_usage_roads[road_index][0]
             
-            i = 1  # 最初の点は残すのでインデックス1から始めます
-            while i < len(route_copy) - 1:
-                # 点 A, B, C を取得
-                A = route_copy[i - 1]
-                B = route_copy[i]
-                C = route_copy[i + 1]
+        # print("selected_road",selected_road)
+        # road_probability_list =[]
+        # for i in range(len(temp_copy)):
+        #     road_probability_list.append([low_usage_roads[i],probabilities[i]])
+        # print("road_probability_list",road_probability_list)
 
-                # ベクトル AB の傾きと BC の傾きを比較
-                if abs((B[1] - A[1]) * (C[0] - B[0]) - (B[0] - A[0]) * (C[1] - B[1])) < delta:
-                    # 点 B が A と C の間にある直線上にあれば削除
-                    route_copy.pop(i)
+        # print("neighbor temp",temp)
+        if random.random() < 0.1: # 15%の確率で道路を削除
+            print("道路を削除")
+            temp_copy.remove(selected_road)
+            print("selected_road",selected_road)
+        else:  # 残りの確率で既存の道路をランダムに変更
+            while True:
+                selected_coord = random.choice(list(selected_road.keys()))
+                if can_add_to_coord(selected_coord,selected_road[selected_coord]):
+                    break
+            #端点かを判断
+            isedge = 0 # 端点かどうかの整数（1:端点,　2:端点でない）
+            neighbor_list = []
+            for coord in selected_road:
+                coord_neighbor = [(coord[0] + DIRECTIONS[i][0], coord[1] + DIRECTIONS[i][1]) for i in selected_road[coord]]
+                if selected_coord in coord_neighbor:
+                    isedge += 1
+                    neighbor_list.append(coord)
+            # print("neighbor_list",neighbor_list)
+                
+            if isedge==1:
+                # if random.choice([True, False]) or len(selected_road[selected_coord]) == 8:
+                if len(selected_road[selected_coord]) == 8 :
+                    # 端点を削除
+                    print("端点を削除")
+                    if len(selected_road[selected_coord]) > 0:
+                        del selected_road[selected_coord]
+                    #隣接側の道路も削除
+                    for neighbor_coord in neighbor_list:
+                        neighbor_coord_direction = DIRECTIONS.index((selected_coord[0]-neighbor_coord[0],selected_coord[1]-neighbor_coord[1]))
+                        # print("selected_road[neighbor_coord] before",selected_road[neighbor_coord])
+                        selected_road[neighbor_coord].remove(neighbor_coord_direction)
+                        # print("neighbor_coord",neighbor_coord)
+                        # print("neighbor_coord_direction",neighbor_coord_direction)
+                        # print("selected_road[neighbor_coord] after",selected_road[neighbor_coord])
+                        print("selected_road",selected_road)
+                        print("selected_coord",selected_coord)
                 else:
-                    # 点 B が直線上にない場合は次の点へ進む
-                    i += 1
-            
-            return route_copy
-        path = find_path(pre_point, 0, len(pre_point)-1)
-        print("path",path)
-        print(f"0番目の点から{len(pre_point)-1}番目の点までの経路:", path)
+                    # 新しい点を追加
+                    print("端点を追加")
+                    print("selected_road",selected_road)
+                    print("selected_coord",selected_coord)
+                    while True:
+                        new_direction_index = random.randint(0, len(DIRECTIONS) - 1)
+                        #要修正
+                        if  0 <= selected_coord[0]+  DIRECTIONS[new_direction_index][0] <= grid_size_x-1 and 0 <= selected_coord[1]+ DIRECTIONS[new_direction_index][1] <= grid_size_y-1:
+                            new_neighbor_coord = (selected_coord[0]+  DIRECTIONS[new_direction_index][0], selected_coord[1]+  DIRECTIONS[new_direction_index][1])
+                            if new_direction_index not in selected_road[selected_coord]:
+                                neighbor_index = DIRECTIONS.index((-DIRECTIONS[new_direction_index][0], -DIRECTIONS[new_direction_index][1]))
+                                #同じ仮設道路内での重複を防ぐ
+                                if new_neighbor_coord not in selected_road :
+                                    break
+                                else:
+                                    if neighbor_index not in selected_road[new_neighbor_coord]:
+                                        break
+                    # print("selected_coord",selected_coord)
+                    # print("new_neighbor_coord",new_neighbor_coord)
+                    selected_road[selected_coord].add(new_direction_index)
+                    selected_road[new_neighbor_coord] = {neighbor_index}
 
-        temp_list_cleaned2 = []
-        route = []
-        for i in range(len(temp_list_cleaned_copy_ij)):
-            for j in range(len(temp_list_cleaned_copy_ij[i])):
-                temp_list_cleaned2.append(temp_list_cleaned_copy_ij[i][j])
-        print("temp_list_cleaned2",temp_list_cleaned2)
-        for i in range(len(path)):
-            route.append(temp_list_cleaned2[int(path[i])])
-        print("route",route)
-        route = clear_online(route)
-        print("route_after",route)
-        return route
-       
-    #ここから実行部分   
-    cost,pre_point_matrix = shortest_route_search(cut_indices, fill_indices,temp_list_cleaned)
-    for i in range(len(cost)):
-        print(f"cost[{i}]",cost[i])
+                    print("new_neighbor_coord",new_neighbor_coord)
+            else:
+                #端点でない点の場合は追加
+                print("端点でない点に点を追加")
+                print("selected_road",selected_road)
+                print("selected_coord",selected_coord)
+                while True:
+                    random_direction = random.randint(0,len(DIRECTIONS)-1)
+                    #要修正
+                    if  0 <= selected_coord[0]+  DIRECTIONS[random_direction][0] <= grid_size_x-1 and 0 <= selected_coord[1]+ DIRECTIONS[random_direction][1] <= grid_size_y-1:
+                        if random_direction not in selected_road[selected_coord]:
+                            break
+                new_neighbor_coord = (selected_coord[0]+  DIRECTIONS[random_direction][0], selected_coord[1]+  DIRECTIONS[random_direction][1])
+                new_nighbor_direction = DIRECTIONS.index((-DIRECTIONS[random_direction][0], -DIRECTIONS[random_direction][1]))
+                print("new_neighbor_coord",new_neighbor_coord)
+                selected_road[selected_coord].add(random_direction)
+                selected_road[new_neighbor_coord] = {new_nighbor_direction}
+
+    #WRITE ME
+    #空の仮設道路を削除
+    print("temp ",temp_copy)
+    for road in temp_copy:
+        if not road:
+            temp_copy.remove(road)
+        for coord in list(road.keys()):
+            if not road[coord]:
+                del road[coord] 
+    #仮設道路同士の重なりを削除＆つながっている道路の結合
+    #使われていない道路の端っこを削除
+
+    print("new temp",temp_copy)
     print("\n")
-    print("temp_list_cleaned",temp_list_cleaned)
+    return temp_copy
 
-# 0番目の点から14番目の点までの経路を探す
-    return cost,pre_point_matrix
+def simulated_annealing(temp,soil_amount):
+    current_solution = temp
+    current_route,current_score = evaluate_design(current_solution,soil_amount)
+    best_solution = current_solution
+    best_score = current_score
+    best_route = current_route
+    temperature = initial_temprature
+    best_score_loop = 0
+    best_solution_flow = []
+    current_solution_flow = []
+    neighbor_solution_flow = []
+    # selected_road_flow = []
+    # road_probability_list = []
+    for _ in range(max_iter):
+        print("simulated anealing loop",_)
+        print("soil_amount",soil_amount)
+        temperature *= alpha
+        current_route_copy = copy.deepcopy(current_route)
+        current_solution_copy = copy.deepcopy(current_solution)
+        neighbor_solution= generate_neighbor(current_route_copy,current_solution_copy,soil_amount)
+        neighbor_route,neighbor_score = evaluate_design(neighbor_solution,soil_amount)
 
-cut_indices = [[(1, 0),2],[(1, 2),2],[(2, 0),2],[(2, 1),2],[(2, 2),2],[(2, 3),2],[(3, 0),2],[(3, 1),2],[(3, 3),3]]
+
+        # 新しい解が良い場合、または確率的に受け入れる
+        if (neighbor_score < current_score) or (random.random() < np.exp(-( np.abs(neighbor_score - current_score) ) / temperature)):
+            print("neighbor")
+            current_solution = neighbor_solution
+            current_score = neighbor_score
+            current_route = neighbor_route
+
+            # ベスト解を更新
+        if current_score < best_score:
+            best_solution = current_solution
+            best_score = current_score
+            best_route = current_route
+            best_score_loop = _
+        
+        best_solution_flow.append([best_score, best_solution])
+        current_solution_flow.append([current_score, current_solution])
+        neighbor_solution_flow.append([neighbor_score, neighbor_solution])
+        print("neighbor_solution",neighbor_solution)
+        print("neighbor_score",neighbor_score)
+        print("current_solution",current_solution)
+        print("current_score",current_score)
+        print("best_solution",best_solution)
+        print("best_score",best_score)
+        print("\n")
+    # 温度を下げる
+
+
+    return best_solution, best_score, best_route ,best_solution_flow,current_solution_flow,neighbor_solution_flow,best_score_loop
+
+
+
+
+# 仮設道路のデザイン
+
+
+# temporary_roads = {
+# }
+grid_size_x = 4
+grid_size_y = 4
+#切土の座標と土量
+cut_indices = [[(1, 0),1],[(1, 2),1],[(2, 0),1],[(2, 1),1],[(2, 2),1],[(2, 3),1],[(3, 0),1],[(3, 1),1],[(3, 3),2]]
 #盛土の座標と土量
-fill_indices = [[(0, 0),3],[(0, 1),2],[(0, 2),2],[(0, 3),2],[(1, 3),3],[(1, 1),3],[(3, 2),4]]
+fill_indices = [[(0, 0),2],[(0, 1),1],[(0, 2),1],[(0, 3),1],[(1, 3),2],[(1, 1),1],[(3, 2),2]]
+
 
 cut_indices_float = []
 for i in range(len(cut_indices)):
@@ -360,12 +311,6 @@ fill_indices_float = []
 for i in range(len(fill_indices)):
     new_coords = (float(fill_indices[i][0][0]), float(fill_indices[i][0][1]))  # 新しいタプルを作成
     fill_indices_float.append([new_coords, fill_indices[i][1]])  # 新しいリストに追加
-#仮設道路の情報
-# temp = [[(0, 0), (0, 1)],[(1, 1),(2, 2)],[(1, 2),(2, 1)]]
-temp = []
-
-start_time = time.time()
-
 
 sum_cut = sum(cut_indices[i][1] for i in range(len(cut_indices)))
 sum_fill = sum(fill_indices[i][1] for i in range(len(fill_indices)))
@@ -374,158 +319,98 @@ if (sum_cut != sum_fill):
     print("input error:切土と盛土の土量が違います")
     exit() 
 
-
-print("cut_indices_float",cut_indices_float)
-print("fill_indices_float",fill_indices_float)
-# コスト行列の作成
-costs,route_matrix = calculate_cost(cut_indices_float, fill_indices_float,temp)
-# print("route_matrix",route_matrix)
-route_arrows = route_matrix[0]
-# print("route_matrix",route_matrix)
-# print("len(route_matrix)",len(route_matrix))
-# print("\n")
-
-# 問題の設定
-prob = pulp.LpProblem("土砂運搬最適化", pulp.LpMinimize)
-
-# 変数の定義
-T = sum_cut  # ステップ数
-num_fill = len(fill_indices_float)
-num_cut = len(cut_indices_float)
-
-# 変数xはステップtで切土cから盛土fに運んだ時、x[t][c][f]=1となる。それ以外は0
-x_vars = pulp.LpVariable.dicts("x", (range(T), range(num_cut), range(num_fill)), cat='Binary')
-objective = pulp.LpAffineExpression()
-
-#目的関数
-m=[0] * T
-n=[0] * T
-#各ステップで切土から盛土に土を運んだ時のコスト
-for t in range(T):
-    for f in range(num_fill):
-        for c in range(num_cut):
-            if (x_vars[t][c][f]==1):
-                m[t] = c
-                n[t] = f
-        objective += 20 * costs[c][f] * x_vars[t][c][f]
-#盛土地点から次のステップの切土地点への移動コストを追加
-for t in range(T-1):
-    objective += costs[m[t+1]][n[t]]
-
-prob += objective
-
-
-# 制約条件
-# 各ステップでちょうど1つの切土地点と盛土地点が選ばれる
-for t in range(T):
-    prob += pulp.lpSum(x_vars[t][c][f] for c in range(num_cut) for f in range(num_fill)) == 1
-
-
-
-# 最終ステップで全ての土量がゼロになるように制約
-for c in range(num_cut):
-    prob += pulp.lpSum(x_vars[t][c][f] for t in range(T) for f in range(num_fill)) == cut_indices[c][1]
-
-for f in range(num_fill):
-    prob += pulp.lpSum(x_vars[t][c][f] for t in range(T) for c in range(num_cut)) == fill_indices[f][1]
-# 問題の解決
-prob.solve()
-
-route_list = []
-for t in range(T):
-    # print(f"\nステップ {t+1}:")
-    for f in range(num_fill):
-        for c in range(num_cut):
-            if pulp.value(x_vars[t][c][f]) > 0.5:
-                # print(f"  切土地点 ({cut_indices[c][0]}) から 盛土地点 ({fill_indices[f][0]}) に土が運ばれました")
-                index = c * len(fill_indices) + f
-                route_list.append(route_matrix[index])                    
-# print("最適なコスト:", pulp.value(prob.objective))
-# print("仮設道路の長さ",temp_length(temp))
-print(f"score:{pulp.value(prob.objective)}")
-
-#結果の可視化
-
-# グリッドのサイズ
-grid_size_x = 4  # x方向のサイズ
-grid_size_y = 3  # y方向のサイズ
-
-# 格子点の座標を生成
-x = [i for i in range(grid_size_x)]
-y = [i for i in range(grid_size_y)]
-X, Y = np.meshgrid(x, y)
-
-# プロット用の格子点を設定
-x_coords = X.flatten()
-y_coords = Y.flatten()
-
-# 土量マトリックスを作成（仮に色付けのためのデータを用意）
-soil_amount = np.zeros((3, 4))
+soil_amount = np.zeros((grid_size_x, grid_size_y))
 for [(i, j),k] in cut_indices:
-    soil_amount[int(j), int(i)] = 1
+    soil_amount[int(i), int(j)] = k
 for [(i, j),k] in fill_indices:
-    soil_amount[int(j),int(i)] = 0
+    soil_amount[int(i),int(j)] = -k
+# print("soil_amount",soil_amount)
 
 
+start_time = time.time()
+
+#土砂の分配を計画(固定)
+allocation = earth_allocation(cut_indices_float, fill_indices_float)
+# allocation = [[(3.0, 0.0), (0.0, 0.0)], [(2.0, 0.0), (0.0, 1.0)], [(1.0, 0.0),(1.0,1.0)],[(3.0, 0.0), (0.0, 0.0)]]
+# print("allocation",allocation)
+
+temporary_roads = [
+
+]
+
+# temp = temporary_roads[0]
+# print("temp",temp)
+# temporary_road_check(temporary_roads,grid_size_x,grid_size_y)
+# # temporary_roads = [
+# # ]
+# # # 初期解の評価
+# route_first,cost_first = evaluate_design(temporary_roads,soil_amount)
+# print("soil_amount",soil_amount)
+# # print("temporary_roads",temporary_roads)
+# # temp_L= temp_length(temporary_roads,soil_amount)
+# # print("temp_length",temp_L)
+# print("初期ルート",route_first)
+path = [[(3.0, 0.0), (2.0, 0.0), (1.0, 0.0), (0.0, 1.0)], [(3.0, 3.0), (2.0, 3.0), (1.0, 3.0)], [(2.0, 0.0), (1.0, 1.0), (0.0, 0.0)], [(1.0, 0.0), (0.0, 0.0)], [(2.0, 2.0), (1.0, 2.0), (0.0, 3.0)], [(2.0, 1.0), (1.0, 1.0)], [(3.0, 3.0), (3.0, 2.0)], [(1.0, 2.0), (0.0, 2.0)], [(3.0, 1.0), (3.0, 2.0)], [(2.0, 3.0), (1.0, 3.0)]]
+# print("path",path)
+# for i in range(100):
+#     temporary_roads = generate_neighbor(path,temporary_roads,soil_amount)
+#     print("temp",temporary_roads)
+
+# usage = calculate_temporary_road_usage(path,temp,soil_amount)
+# print("usage",usage)
+# print("初期ルート",route_first)
+# print("初期解のコスト",cost_first)
+# print("初期解",temporary_roads)
+# print("\n")
+# # plot_route(grid_size_x,grid_size_y,route_first,temporary_roads, cut_indices, fill_indices)
+
+# パラメータの設定
+initial_temprature = 1000
+# final_temprature = 1
+alpha = 0.95
+max_iter = 1500
 
 
-def animate(i):
-    # 前のフレームの矢印をクリア
-    ax.clear()
-    
-    # グリッドの描画（背景）
-    ax.pcolormesh(soil_amount, edgecolors='gray', linewidth=2, cmap='viridis', shading='flat', alpha=0.2)
-    ax.scatter(x_coords+0.5, y_coords+0.5, color='blue', marker='o')  # 格子点のプロット
+# 最適化の実行
+optimized_solution, optimized_score, optimized_route,best_solution_flow,current_solution_flow,neighbor_solution_flow,best_score_loop = simulated_annealing(temporary_roads,soil_amount)
 
-    # 格子点のラベルを表示（x, y方向に0.5ずらす）
-    for x_val, y_val in zip(x_coords, y_coords):
-        ax.text(x_val + 0.5, y_val + 0.4, f'({x_val},{y_val})', fontsize=12, ha='center', va='top')
-    
-    #仮設道路を描画
-    for k in range(len(temp)):
-        start_point, end_point = temp[k]
-        adjusted_start = (start_point[0] + 0.5, start_point[1] + 0.5)
-        adjusted_end = (end_point[0] + 0.5, end_point[1] + 0.5)
-        ax.plot([adjusted_start[0], adjusted_end[0]], [adjusted_start[1], adjusted_end[1]], 
-                    color='black', linewidth=5, alpha=0.5)
-    print("route_arrows",route_arrows)   
-    # 矢印を描画
-    for j in range(len(route_arrows) - 1):
-        print("j",j)
-        start_point = route_arrows[j]
-        end_point = route_arrows[j + 1]
-        
-        adjusted_start = (start_point[0] + 0.5, start_point[1] + 0.5)
-        adjusted_end = (end_point[0] + 0.5, end_point[1] + 0.5)
+end_time = time.time()
+print("最適化されたデザイン:", optimized_solution)
+print("最適スコア:$", '{:.2f}'.format(optimized_score))
+print("最適ルート:", optimized_route)
+print("最適化されたデザインが出たループ",best_score_loop)
+print("処理時間:", end_time - start_time, "秒")
 
-        ax.annotate('', xy=adjusted_end, xytext=adjusted_start,
-                    arrowprops=dict(facecolor='red', edgecolor='black', linewidth=2, alpha=0.7, shrink=0.05))
-        
-        # 矢印の番号を矢印の中心に表示
-        mid_point = ((adjusted_start[0] + adjusted_end[0]) / 2, (adjusted_start[1] + adjusted_end[1]) / 2)
-        ax.text(mid_point[0], mid_point[1] + 0.1, f'{j + 1}', fontsize=12, ha='center', color='black')
-    
-    # グリッド線の描画
-    for k in np.arange(-1.0, grid_size_y + 1, 1.0):
-        ax.axhline(y=k, color='gray', linestyle='--', linewidth=0.5)
-    for k in np.arange(-1.0, grid_size_x + 1, 1.0):
-        ax.axvline(x=k, color='gray', linestyle='--', linewidth=0.5)
-    
-    ax.set_xlim(-0.5, grid_size_x + 0.5)
-    ax.set_ylim(-0.5, grid_size_y + 0.5)
-    ax.set_aspect('equal', adjustable='box')
-    ax.set_title('4x3 Grid Animation with Route Arrows')
-    ax.set_xlabel('X-axis')
-    ax.set_ylabel('Y-axis')
+plot_route(grid_size_x,grid_size_y,optimized_route,optimized_solution, cut_indices, fill_indices)
 
-# アニメーションの準備
-fig, ax = plt.subplots(figsize=(8, 6))
+# for i in range(len(best_solution_flow)):
+#     print(f"{i+1}回目")
+#     print("best_solution",best_solution_flow[i][1])
+#     print("best_solution_score",best_solution_flow[i][0])
+#     print("neighbor_solution",current_solution_flow[i][1])
+#     print("neighbor_solution_score",current_solution_flow[i][0])
+#     print("current_solution",current_solution_flow[i][1])
+#     print("current_solution_score",current_solution_flow[i][0])
+#     print("\n")
 
-# アニメーションの実行
-ani = animation.FuncAnimation(fig, animate, frames=2*len(route_arrows), interval=1000, repeat=False)
+# plot_solution_flow(grid_size_x,grid_size_y,neighbor_solution_flow,cut_indices,fill_indices)
+grid_size_x = 4
+grid_size_y = 4 
 
-# GIFや動画として保存したい場合
-# ani.save('animation.gif', writer='imagemagick')
+current_score_list = [current_solution_flow[i][0] for i in range(len(current_solution_flow))]
+# Best Solution Scoreをリスト化
+best_score_list = [best_solution_flow[i][0] for i in range(len(best_solution_flow))]
 
-# アニメーションを表示
+# グラフのプロット
+plt.figure(figsize=(10, 6))  # グラフサイズを設定
+plt.plot(current_score_list, marker='x', label="Current Solution Score", color='blue')  # Current Solution Scoreをプロット
+plt.plot(best_score_list, marker='o', label="Best Solution Score", color='orange') 
+plt.xlabel("Index")  # 横軸ラベル
+plt.ylabel("Score")  # 縦軸ラベル
+plt.title("Solution Score")  # タイトル
+plt.grid()  # グリッド線を追加
 plt.show()
+
+
+
+
