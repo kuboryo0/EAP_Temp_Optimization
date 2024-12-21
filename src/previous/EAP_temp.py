@@ -7,8 +7,8 @@ import matplotlib.animation as animation
 import math
 import time
 import copy
-from function import temp_usage
-from function import temp_length
+from temp_placement.function import temp_usage
+from temp_placement.function import temp_length
 # セルの土量設定
 # 土量 = np.array([-1000, -4000, -5000, 550, -500, 800, 450, 6700, 2000]).reshape((3, 3))
 temp_eff = 0.5

@@ -6,10 +6,10 @@ import pulp
 import time
 import math
 import matplotlib.pyplot as plt
-from function import calculate_cost
-from function import plot
-from function import temp_length
-from function import temp_usage
+from temp_placement.function import calculate_cost
+from temp_placement.function import plot
+from temp_placement.function import temp_length
+from temp_placement.function import temp_usage
 temp_eff = 0.7
 v =  1/temp_eff
 tan_alpha = math.sqrt(v**2-1)

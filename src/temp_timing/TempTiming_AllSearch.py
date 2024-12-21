@@ -1,6 +1,7 @@
 import heapq
 import copy
 from itertools import product
+import numpy as np
 DIRECTIONS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 temp_eff = 0.5  # 仮設道路を通るときのコスト減少効果
 grid_size_x = 4
@@ -160,9 +161,9 @@ def optimize_construction(allocation, temp):
 
                 print("current_temp after built",current_temp)
                 # current_temp = [copy.deepcopy(temp[i]) for i in current_temp]
-                
+                soil_amount_copy = copy.deepcopy(soil_amount)
                 # A*で最短経路を計算
-                path, cost = astar(start, goal, current_temp)
+                path, cost = astar(start, goal, current_temp,soil_amount_copy)
                 print("path",path)
                 print("cost",cost)
 
@@ -268,7 +269,7 @@ temporary_roads = [
 # allocation = [[(0, 3), (3, 2)], [(1, 0), (2, 0)], [(0, 0), (3, 1)]]
 allocation = [[(1, 0), (3, 1)], [(0, 0), (3, 1)]]
 best_schedule, best_cost, best_construction_steps = optimize_construction(
-    allocation, temporary_roads,soil_amount)
+    allocation, temporary_roads)
 
 print("最適なスケジュール:", best_schedule)
 print("最小コスト:", best_cost)

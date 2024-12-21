@@ -369,7 +369,7 @@ temporary_roads = [
 initial_temprature = 1000
 # final_temprature = 1
 alpha = 0.95
-max_iter = 2000
+max_iter = 1000
 
 
 # 最適化の実行

@@ -1,12 +1,16 @@
 #直線距離をコスト行列とした土砂配分計画問題を解くプログラム
+import sys
+import os
+# srcディレクトリをPythonパスに追加
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 import random
 import pulp
 import time
 import math
 import matplotlib.pyplot as plt
-from function_ver2 import earth_allocation
-from function_ver2 import plot_route
+from function_ver2 import earth_allocation,plot_route
 
 temp_eff = 0.7
 v =  1/temp_eff
@@ -20,10 +24,14 @@ temporary_roads = {
 }
 
 print("temporary_roads",temporary_roads)
+# #切土の座標と土量
+# cut_indices = [[(1, 0),1],[(1, 2),1],[(2, 0),1],[(2, 1),1],[(2, 2),1],[(2, 3),1],[(3, 0),1],[(3, 1),1],[(3, 3),2]]
+# #盛土の座標と土量
+# fill_indices = [[(0, 0),2],[(0, 1),1],[(0, 2),1],[(0, 3),1],[(1, 3),2],[(1, 1),1],[(3, 2),2]]
 #切土の座標と土量
-cut_indices = [[(1, 0),1],[(1, 2),1],[(2, 0),1],[(2, 1),1],[(2, 2),1],[(2, 3),1],[(3, 0),1],[(3, 1),1],[(3, 3),2]]
+cut_indices = [[(1, 2),0],[(2, 0),0],[(2, 1),0],[(2, 2),0],[(2, 3),0],[(3, 0),0],[(3, 1),0],[(3, 3),0]]
 #盛土の座標と土量
-fill_indices = [[(0, 0),2],[(0, 1),1],[(0, 2),1],[(0, 3),1],[(1, 3),2],[(1, 1),1],[(3, 2),2]]
+fill_indices = [[(0, 0),0],[(0, 1),0],[(0, 2),0],[(0, 3),0],[(1, 0),0],[(1, 3),0],[(1, 1),0],[(3, 2),0]]
 
 cut_indices_float = []
 for i in range(len(cut_indices)):
@@ -48,7 +56,7 @@ start_time = time.time()
 
 #土砂の分配を計画
 routes = earth_allocation(cut_indices_float, fill_indices_float)
-
+routes = [((1, 1), (2, 2)),((0, 1),(3, 3)),((1, 0),(3, 3))]
 # # 初期解の評価
 # path_list,cost = a_star(routes,temporary_roads,4)
 
