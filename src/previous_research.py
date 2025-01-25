@@ -16,16 +16,6 @@ def get_decimal_part(value):
 def calculate_distance(i, j, k, l):
     return np.sqrt((i - k)**2 + (j - l)**2)
 
-# 仮設道路のコストを設定
-# def in_temp_road(x1, y1, x2, y2):
-#     for (start, end) in temp_road:
-#         (x_start, y_start) = start
-#         (x_end, y_end) = end
-#         # 仮設道路の直線に含まれるかチェック
-#         if (x1, y1) in line_points(x_start, y_start, x_end, y_end) and (x2, y2) in line_points(x_start, y_start, x_end, y_end):
-#             return True
-#     return False
-
 def line_points(x1, y1, x2, y2):
     """直線上の整数座標を返す"""
     points = []

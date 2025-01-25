@@ -1,15 +1,25 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
+            "name": "(gdb) Launch",
+            "type": "cppdbg",
             "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal"
+            "program": "${fileDirname}\\${fileBasenameNoExtension}.exe", // 実行するプログラム
+            "args": [], // 必要に応じて引数を指定
+            "stopAtEntry": false, // メイン関数の最初で停止しない場合は false
+            "cwd": "${fileDirname}", // 作業ディレクトリを設定
+            "environment": [],
+            "externalConsole": true, // 外部コンソールを使用する
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Program Files (x86)/mingw64/bin/gdb.exe", // GDB のパス
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }

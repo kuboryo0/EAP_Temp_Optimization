@@ -10,7 +10,7 @@ import pulp
 import time
 import math
 import matplotlib.pyplot as plt
-from function_ver2 import earth_allocation,plot_route
+from Python.function.function_ver2 import earth_allocation,plot_route
 
 temp_eff = 0.7
 v =  1/temp_eff
@@ -50,13 +50,12 @@ if (sum_cut != sum_fill):
     print("input error:切土と盛土の土量が違います")
     exit() 
 
-
-
 start_time = time.time()
 
 #土砂の分配を計画
-routes = earth_allocation(cut_indices_float, fill_indices_float)
-routes = [((1, 1), (2, 2)),((0, 1),(3, 3)),((1, 0),(3, 3))]
+# routes = earth_allocation(cut_indices_float, fill_indices_float)
+# print("routes",routes)
+routes = [((3.0, 0.0), (0.0, 1.0)), ((3.0, 3.0), (1.0, 3.0)), ((2.0, 0.0), (0.0, 0.0)), ((1.0, 0.0), (0.0, 0.0)), ((2.0, 2.0), (0.0, 3.0)), ((2.0, 1.0), (1.0, 1.0)), ((3.0, 3.0), (3.0, 2.0)), ((1.0, 2.0), (0.0, 2.0)), ((3.0, 1.0), (3.0, 2.0)), ((2.0, 3.0), (1.0, 3.0))]
 # # 初期解の評価
 # path_list,cost = a_star(routes,temporary_roads,4)
 
