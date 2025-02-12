@@ -674,12 +674,12 @@ solution = []
 
 # print(evaluate_design(solution))
 
-best_solution, best_score, best_route,best_solution_flow,current_solution_flow,neighbor_solution_flow,best_score_loop = simulated_annealing(allocation,solution)
-end_time = time.time()  
-print("best_solution",best_solution)
-print("best_score",best_score)
-print("best_route",best_route)
-print(f"best_score_loop {best_score_loop}/{max_iter}",)
-print("time",end_time-start_time)
+# best_solution, best_score, best_route,best_solution_flow,current_solution_flow,neighbor_solution_flow,best_score_loop = simulated_annealing(allocation,solution)
+# end_time = time.time()  
+# print("best_solution",best_solution)
+# print("best_score",best_score)
+# print("best_route",best_route)
+# print(f"best_score_loop {best_score_loop}/{max_iter}",)
+# print("time",end_time-start_time)
 
-plot_route(best_route,best_solution,cut_indices,fill_indices,zero_indices)
+# plot_route(best_route,best_solution,cut_indices,fill_indices,zero_indices)

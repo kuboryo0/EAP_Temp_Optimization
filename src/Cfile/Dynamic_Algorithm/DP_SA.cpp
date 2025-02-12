@@ -29,6 +29,9 @@ struct CoordPair {
 
 struct Status {
     int status[2];
+    bool operator==(const Status& other) const {
+    return status[0] == other.status[0] && status[1] == other.status[1];
+    }
 };
 
 struct TemporaryRoads {
@@ -64,17 +67,26 @@ struct CoordPairWithStatus {
 struct Node {
     int priority;
     Coord coord;
-
     // 比較演算子で優先度を定義（小さい値が高優先度）
     bool operator>(const Node& other) const {
         return priority > other.priority;
     }
 };
 
+struct State {
+    std::vector<Status> roadStatus;
+    int step;
+
+    bool operator==(const State& other) const {
+        return roadStatus == other.roadStatus && step == other.step;
+    }
+};
+
 struct Path {
+    size_t new_size;
     std::vector<Coord> coord;
 
-    void resize(size_t new_size) {
+    void resize() {
         coord.resize(new_size);
     }
     size_t size() const {
@@ -88,6 +100,36 @@ struct Result {
     std::vector<std::vector<int>> used_road_flow;  //used_temp_list[step][road]
     std::vector<double> built_length_list;
 };
+
+
+// Define hash function for Status
+namespace std {
+    template <>
+    struct hash<Status> {
+        size_t operator()(const Status& s) const {
+            return hash<int>()(s.status[0]) ^ (hash<int>()(s.status[1]) << 1);
+        }
+    };
+
+    template <>
+    struct hash<std::vector<Status>> {
+        size_t operator()(const std::vector<Status>& v) const {
+            size_t seed = 0;
+            for (const auto& s : v) {
+                seed ^= hash<Status>()(s) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+            }
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<std::tuple<std::vector<Status>, int>> {
+        size_t operator()(const std::tuple<std::vector<Status>, int>& t) const {
+            const auto& [statuses, step] = t;
+            return hash<std::vector<Status>>()(statuses) ^ (hash<int>()(step) << 1);
+        }
+    };
+}
 
 double calculate_distance_3D(const Coord& a, const Coord& b, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
     double dx = a.x - b.x;
@@ -404,8 +446,8 @@ double cost_calculation( double operate_cost,double built_length) {
     double cost_construction = cost_hour * soil_volume / (truck_num * volume_unit_truck) * time_average / work_eff;
     // 仮設道路の建設コスト
     double cost_road = built_length * construction_temp * grid_length;
-    std::cout << "cost_construction: $" << cost_construction << std::endl;
-    std::cout << "cost_road: $" << cost_road << std::endl;
+    // std::cout << "cost_construction: $" << cost_construction << std::endl;
+    // std::cout << "cost_road: $" << cost_road << std::endl;
     return cost_construction + cost_road;
 }
 
@@ -420,6 +462,279 @@ std::tuple<Result,double> evaluate_design(
     // コストの出力
     std::cout << "Total cost: $" << total_cost << std::endl;
     return {path_list, total_cost};
+}
+
+std::tuple<std::vector<std::vector<int>>, double,std::vector<Path>> optimizeRoadConstruction(std::vector<Allocation> allocations, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y], const TemporaryRoads& roads) {
+    std::cout << "starting optimizeRoadConstruction" << std::endl;
+    using Key = std::vector<Status>; // temporary_road
+    std::unordered_map<Key, std::vector<std::tuple<std::vector<std::vector<int>>, double, std::vector<Path>>>> dp; 
+    int road_num = roads.count;
+    size_t step_num = allocations.size();
+    // Initial state
+    std::vector<Status> initialStatus(roads.count, {{0, 0}});
+    std::vector<std::vector<int>> initialTimings(roads.count, std::vector<int>(allocations.size(), 0)); // Initial timings
+    std::vector<Path> initialPath(step_num);
+    dp[initialStatus].push_back({initialTimings, 0, initialPath});
+    //print initail dp
+    // std::cout << "Initial dp:\n";   
+    // for (const auto& [key, value] : dp) {
+    //     std::cout << "Key: ";       
+    //     for (const auto& status : key) {
+    //         std::cout << "(" << status.status[0] << ", " << status.status[1] << ") ";
+    //     }
+    //     std::cout << std::endl;
+    //     for (const auto& [timings, cost, path] : value) {
+    //         std::cout << "Cost: " << cost << std::endl;
+    //         std::cout << "Timings:\n";
+    //         for (const auto& timing : timings) {
+    //             for (int t : timing) {
+    //                 std::cout << t << " ";
+    //             }
+    //             std::cout << std::endl;
+    //         }
+    //     }
+    // }
+    for (int t = 0; t < step_num; ++t) {
+        // std::cout << "t: " << t << std::endl;
+        std::unordered_map<Key, std::vector<std::tuple<std::vector<std::vector<int>>, double, std::vector<Path>>>> nextDp;
+        const Allocation& allocation = allocations[t];
+
+        for (auto& [state, value] : dp) {
+            // std::cout << "state: ";
+            // for (const auto& status : state) {
+            //     std::cout << "(" << status.status[0] << ", " << status.status[1] << ") ";
+            // }
+            // std::cout << std::endl;
+            for(const auto& [timingsList, cost , pathlist] : value) {
+                // std::cout << "cost: " << cost << std::endl;
+                // // Calculate the base cost for the current state
+                // std::cout << "timingsList: " << std::endl;
+                // for (const auto& timing : timingsList) {
+                //     for (int t : timing) {
+                //         std::cout << t << " ";
+                //     }
+                //     std::cout << std::endl;
+                // }
+            double base_cost_t=0;
+            TemporaryRoads current_temps;
+            current_temps.count = roads.count;
+            current_temps.coordpair = roads.coordpair;
+            current_temps.statuslist = state;
+            //check current_temps
+            // std::cout << "current_temps: " << std::endl;
+            // std::cout << "coordpair: " << std::endl;
+            // for (const auto& coordpair : current_temps.coordpair) {
+            //     std::cout << "(" << coordpair.coords[0].x << ", " << coordpair.coords[0].y << "), (" << coordpair.coords[1].x << ", " << coordpair.coords[1].y << ")" << std::endl;
+            // }
+            // std::cout << "statuslist: " << std::endl;
+            // for (const auto& status : current_temps.statuslist) {
+            //     std::cout << "(" << status.status[0] << ", " << status.status[1] << ") ";
+            // }
+            // std::cout << std::endl;
+            std::vector<int> usedRoads_0;
+            usedRoads_0.resize(roads.count, 0);
+            Path path_0;
+            path_0.new_size = 0;
+            path_0.resize();
+            // std::cout << "before astar" << std::endl;
+            astar(allocation, current_temps, soil_amount, usedRoads_0, base_cost_t, path_0);
+            // std::cout << "after astar" << std::endl;
+            // //print path, base_cost_t,usedRoads
+            // std::cout << "base_cost_t: " << base_cost_t << std::endl;
+            // std::cout << "path_0: ";
+            // for (const auto& coord : path_0.coord) {
+            //     std::cout << "(" << coord.x << ", " << coord.y << ") ";
+            // }
+            // std::cout << "usedRoads_0: ";
+            // for (int i : usedRoads_0) {
+            //     std::cout << i << " ";
+            // }
+            // std::cout << std::endl;
+            for (int j = 0; j < roads.count; ++j) {
+                if ((roads.coordpair[j].coords[0].x == allocation.start.x && roads.coordpair[j].coords[0].y == allocation.start.y) ||
+                    (roads.coordpair[j].coords[0].x == allocation.goal.x && roads.coordpair[j].coords[0].y == allocation.goal.y)) {
+                    current_temps.statuslist[j].status[0] = 0;}
+                if ((roads.coordpair[j].coords[1].x == allocation.start.x && roads.coordpair[j].coords[1].y == allocation.start.y) ||
+                    (roads.coordpair[j].coords[1].x == allocation.goal.x && roads.coordpair[j].coords[1].y == allocation.goal.y)) {
+                    current_temps.statuslist[j].status[1] = 0;}
+                // Update the dp for the new status and cost
+                }
+            auto cost_0 = cost_calculation(base_cost_t,0);
+            std::vector<Path> path_0_list = pathlist;
+            path_0_list[t] = path_0;
+            nextDp[current_temps.statuslist].push_back({timingsList, cost+cost_0, path_0_list});
+
+            // Explore all subsets of roads to build
+            for (int i = 1; i < (1 << roads.count); ++i) {
+                // std::cout << "i: " << i << std::endl;
+                TemporaryRoads current_temps;
+                current_temps.count = roads.count;
+                current_temps.coordpair = roads.coordpair;
+                double cost_i = 0;
+                std::vector<Status> newStatus = state;
+                bool changed = false;
+                std::vector<std::vector<int>> newTimings = timingsList;
+                std::vector<int> changedRoads;
+                changedRoads.resize(roads.count, 0);
+                double distance = 0;
+                // Update the road statuses based on the subset
+                for (int j = 0; j < roads.count; ++j) {
+                    if (i & (1 << j) ){
+                        newTimings[j][t] = 1;
+                        //print road coord
+                        // std::cout << "road coord: (" << roads.coordpair[j].coords[0].x << ", " << roads.coordpair[j].coords[0].y << "), (" << roads.coordpair[j].coords[1].x << ", " << roads.coordpair[j].coords[1].y << ")" << std::endl;
+
+                        double distance_j = calculate_distance_3D(roads.coordpair[j].coords[0], roads.coordpair[j].coords[1], soil_amount);
+                        // std::cout << "distance_j: " << distance_j << std::endl;
+                        if(newStatus[j].status[0] == 0||newStatus[j].status[1] == 0) {
+                        if(newStatus[j].status[0] == 0||newStatus[j].status[1] == 0) {
+                            if(!(newStatus[j].status[0] == 0 && newStatus[j].status[1] == 0)) {
+                                distance = distance / 2;}}
+                        newStatus[j].status[0] = 1;
+                        newStatus[j].status[1] = 1;
+                        changedRoads[j] = 1;
+                        changed = true;
+                        distance+=distance_j; 
+                        }}
+                    }
+                //     std::cout << "distance " << distance << std::endl;
+                // //print newTimings
+                // std::cout << "newTimings: " << std::endl;
+                // for (const auto& timing : newTimings) {
+                //     for (int t : timing) {
+                //         std::cout << t << " ";
+                //     }
+                //     std::cout << std::endl;
+                // }
+                // std::cout << "changed: " << changed << std::endl;
+                // std::cout << "changed roads: ";
+                // for (int i : changedRoads) {
+                //     std::cout << i << " ";
+                // }
+                // std::cout << std::endl;
+                if (!changed) continue;
+                current_temps.statuslist = newStatus;
+                // std::cout << "current_temps status: " << std::endl;
+                // for (const auto& status : current_temps.statuslist) {
+                //     std::cout << "(" << status.status[0] << ", " << status.status[1] << ") ";
+                // }
+                // std::cout << std::endl;
+                // Check route feasibility with A*
+                std::vector<int> usedRoads;
+                usedRoads.resize(roads.count, 0);
+                Path path;
+                path.new_size = 0;
+                path.resize();
+                astar(allocation, current_temps, soil_amount, usedRoads, cost_i, path);
+                // std::cout << "path: ";
+                // for (const auto& coord : path.coord) {
+                //     std::cout << "(" << coord.x << ", " << coord.y << ") ";
+                // }
+                // std::cout << "usedRoads: ";
+                // for (int i : usedRoads) {
+                //     std::cout << i << " ";
+                // }
+                // std::cout << "cost_i: " << cost_i << std::endl;
+                // std::cout << std::endl;
+
+                // cost_i が base_cost_t 以上であればスキップ
+                if (cost_i >= base_cost_t) continue;
+                // Ensure all newly built roads are used
+                bool allUsed = true;
+                for (int j = 0; j < roads.count; ++j) {
+                    if (changedRoads[j] == 1 && usedRoads[j] == 0) {
+                        allUsed = false;
+                        break;
+                    }
+                }
+                // std::cout << "allUsed: " << allUsed << std::endl;
+                if (!allUsed) continue;
+
+            // allocation のスタートとゴール上に存在する仮設道路の status を 0 に変更
+            for (int j = 0; j < roads.count; ++j) {
+                if ((roads.coordpair[j].coords[0].x == allocation.start.x && roads.coordpair[j].coords[0].y == allocation.start.y) ||
+                    (roads.coordpair[j].coords[0].x == allocation.goal.x && roads.coordpair[j].coords[0].y == allocation.goal.y)) {
+                    newStatus[j].status[0] = 0;}
+                if ((roads.coordpair[j].coords[1].x == allocation.start.x && roads.coordpair[j].coords[1].y == allocation.start.y) ||
+                    (roads.coordpair[j].coords[1].x == allocation.goal.x && roads.coordpair[j].coords[1].y == allocation.goal.y)) {
+                    newStatus[j].status[1] = 0;}
+                // Update the dp for the new status and cost
+                }
+            auto cost_all_i = cost_calculation(cost_i,distance);
+            // std::cout << "cost_i: " << cost_i << std::endl;
+            // std::cout << "distance: " << distance << std::endl;
+            std::vector<Path> path_i_list = pathlist;
+            path_i_list[t] = path;
+              nextDp[newStatus].push_back({newTimings, cost+cost_all_i, path_i_list});  
+            }
+        }
+        
+        }
+        // After updating dp, remove the higher cost solutions for the same key
+        for (auto& [key, costList] : nextDp) {
+            std::sort(costList.begin(), costList.end(), [](const auto& a, const auto& b) {
+                return std::get<1>(a) < std::get<1>(b);  // Sort by cost (ascending)
+            });
+
+            // Keep only the lowest cost solution for each key
+            costList.erase(std::unique(costList.begin(), costList.end(), [](const auto& a, const auto& b) {
+                return std::get<1>(a) == std::get<1>(b);
+            }), costList.end());
+        }
+        dp = std::move(nextDp);  // Move to the next state
+        //print dp timing
+        // std::cout << "dp in step " << t << std::endl;
+        // for (const auto& [key, value] : dp) {
+        //     std::cout << "Key: ";
+        //     for (const auto& status : key) {
+        //         std::cout << "(" << status.status[0] << ", " << status.status[1] << ") ";
+        //     }
+        //     std::cout << std::endl;
+        //     for (const auto& [timings, cost, path] : value) {
+        //         std::cout << "Cost: " << cost << std::endl;
+        //         std::cout << "Timings:\n";
+        //         for (const auto& timing : timings) {
+        //             for (int t : timing) {
+        //                 std::cout << t << " ";
+        //             }
+        //             std::cout << std::endl;
+        //         }
+        //     }
+        //     }
+        //       std::cout << std::endl;
+    }
+
+    // Find the minimum cost among final states
+    double minCost = INF;
+    std::vector<std::vector<int>> min_timing;
+    std::vector<Path> min_path;
+    for (const auto& [state, costList] : dp) {
+        for (const auto& [timings, cost, path] : costList) {
+            if (cost < minCost){
+                min_timing = timings;
+                minCost = cost;
+                min_path = path;
+            }
+        }
+    }
+    std::cout << "minPath: " << std::endl;
+    for (const auto& path : min_path) {
+        for (const auto& coord : path.coord) {
+            std::cout << "(" << coord.x << ", " << coord.y << ") ";
+        }
+        std::cout << std::endl;
+    }
+
+    std::cout << "Minimum cost to complete all tasks: " << minCost << std::endl;
+    std::cout << "minimum timing: " << std::endl;
+    for (const auto& timing : min_timing) {
+
+        for (int t : timing) {
+            std::cout << t << " ";
+        }
+        std::cout << std::endl;
+    }
+    return {min_timing, minCost,min_path};
 }
 
 std::vector<std::vector<int>> delete_list(const std::vector<Allocation>& allocation, const Solution& solution) {
@@ -451,35 +766,10 @@ std::vector<std::vector<int>> delete_list(const std::vector<Allocation>& allocat
 
 std::tuple<Solution,double> generate_neighbor(
     const Solution& current_solution,
-    Result& result,
     std::vector<Allocation> allocations,
     double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]
     ) 
 {   
-    // //print current solution
-    // std::cout << std::endl;
-    // std::cout << "current_solution in generate neighbor" << std::endl;
-    // std::cout << "current_solution.count: " << current_solution.count << std::endl;
-    // std::cout << "current_solution.step: " << current_solution.step << std::endl;
-    // for(int i = 0; i < current_solution.count; ++i) {
-    //     std::cout << "current_solution.coordpair[" << i << "]: (" << current_solution.coordpair[i].coords[0].x << ", "
-    //               << current_solution.coordpair[i].coords[0].y << "), (" << current_solution.coordpair[i].coords[1].x << ", "
-    //               << current_solution.coordpair[i].coords[1].y << ")\n";
-    //     std::cout << "  timing[" << i << "]: " ;
-    //     for (int j = 0; j < current_solution.step; ++j) {
-    //         std::cout <<  current_solution.timings[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // //print result used_road_flow
-    // std::cout << "result.used_road_flow" << std::endl;
-    // for (int i = 0; i < result.size; i++) {
-    //     std::cout << "result.used_road_flow[" << i << "]: " << std::endl;
-    //     for (int j = 0; j < result.used_road_flow[i].size(); j++) {
-    //         std::cout <<  result.used_road_flow[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
 
     Solution neighbor_solution = current_solution;
 
@@ -496,9 +786,7 @@ std::tuple<Solution,double> generate_neighbor(
         int loop_num = 0;
         while (true) {
             loop_num++;
-            if( loop_num > 200){std::cout << "loop_num > 200" << std::endl; 
-            std::abort();}
-            std::cout << "Addition while loop" << std::endl;
+            // std::cout << "Addition while loop" << std::endl;
             std::random_device rd;
             std::mt19937 gen(rd()); // メルセンヌ・ツイスタ乱数エンジン
             std::uniform_int_distribution<> coord_dist(0, GRID_SIZE_X - 1); // 座標生成用の分布
@@ -529,42 +817,40 @@ std::tuple<Solution,double> generate_neighbor(
                     //print coord1 and coord2
                     std::cout << "(" << search_pair.coords[0].x << "," << search_pair.coords[0].y << "), (" << search_pair.coords[1].x << "," << search_pair.coords[1].y << ")" << std::endl;
                     neighbor_solution.coordpair.push_back(search_pair);
-                    neighbor_solution.timings.push_back(std::vector<int>(allocations.size(), 1)); // Add corresponding timing
+                    neighbor_solution.timings.push_back(std::vector<int>(allocations.size(), 0)); // Add corresponding timing
                     neighbor_solution.count++;
                     break;
                 }
                 }
         }
   
-        for (size_t i = 0;i<result.size;i++){
-            result.used_road_flow[i].push_back(0);
-        }
-        result.built_length_list.push_back(0);
+        // for (size_t i = 0;i<result.size;i++){
+        //     result.used_road_flow[i].push_back(0);
+        // }
+        // result.built_length_list.push_back(0);
 
         std::cout << "addition finished" << std::endl;
     } else if (modification_type == 1) {
         // Deletion: Remove a random coordinate pair weighted by its usage and length
         std::cout << "Deletion" << std::endl;
             std::vector<double> weights(neighbor_solution.coordpair.size(), 0.0);
-            // std::cout <<"neighbor_solution.coordpair.size(): " << neighbor_solution.coordpair.size() << std::endl;
-            // std::cout << "neighbor_solution.count: " << neighbor_solution.count << std::endl;
             double total_weight = 0.0;
-            for (int i = 0; i < neighbor_solution.count; ++i) {
-                double usage = result.used_road_flow[0][i];
-                for (int j = 1; j < result.used_road_flow.size(); ++j) {
-                    usage += result.used_road_flow[j][i];
-                }
-                if(result.built_length_list[i] == 0)
-                {std::uniform_real_distribution<> dis(0.0, 1.0);
-                double random = dis(gen);
-                if (random < 0.05) 
-                {weights[i] = 0;
-                } else{
-                weights[i] = std::numeric_limits<double>::max();} 
-                }
-                else{weights[i] = result.built_length_list[i] / (usage + 1e-6); }// Weight is inversely proportional to usage
-                total_weight += weights[i];
+        for (int i = 0; i < neighbor_solution.count; ++i) {
+            // Calculate the total timings for the current road
+            double total_timing = 0.0;
+            for (const auto& step_timing : neighbor_solution.timings[i]) {
+                total_timing += step_timing;
             }
+            if (total_timing == 0) {
+                // Large weight for roads that were never built
+                weights[i] = 1.0; // Assign a higher base weight (adjust as needed)
+            } else {
+                // Smaller weight for roads that were built
+                weights[i] = 3.0; // Inversely proportional to the timing
+            }
+            total_weight += weights[i];
+        }
+
             // std :: cout << "total_weight: " << total_weight << std::endl;
             // Normalize weights
             if (total_weight ==0){total_weight = 1;}
@@ -579,31 +865,13 @@ std::tuple<Solution,double> generate_neighbor(
             std::random_device rd;
             std::mt19937 gen(rd()); // Random number generator
             std::discrete_distribution<> dist(weights.begin(), weights.end()); // discrete_distribution with weights
-            // std::cout << "dist: " << dist(gen) << std::endl;
-            // Generate random index based on weighted distribution
+
             size_t to_remove = dist(gen);
-            // std::cout << "to_remove: " << to_remove << std::endl;
-            // std::cout << "neighbor_solution.timings before deletion" << std::endl;
-            // for (int i = 0; i < neighbor_solution.count; ++i) {
-            //     for (int j = 0; j < neighbor_solution.step; ++j) {
-            //         std::cout << "neighbor_solution.timings[" << i << "][" << j << "]: " << neighbor_solution.timings[i][j] << std::endl;
-            //     }
-            // }
-            // std::cout << "result.used_road_flow before deletion" << std::endl;
-            // for (int i = 0; i < result.size; i++) {
-            //     for (int j = 0; j < result.used_road_flow[i].size(); j++) {
-            //         std::cout << "result.used_road_flow[" << i << "][" << j << "]: " << result.used_road_flow[i][j] << std::endl;
-            //     }
-            // }
+
             std::cout << "to_remove: " << to_remove << std::endl;
             neighbor_solution.coordpair.erase(neighbor_solution.coordpair.begin() + to_remove);
             neighbor_solution.timings.erase(neighbor_solution.timings.begin() + to_remove);  
             neighbor_solution.count--;  
-            // result.size--;
-            for (int i = 0;i<result.size;i++){
-            result.used_road_flow[i].erase(result.used_road_flow[i].begin() + to_remove);
-            }
-            result.built_length_list.erase(result.built_length_list.begin() + to_remove);
 
 
             std::cout << "deletion finished" << std::endl;
@@ -617,31 +885,30 @@ std::tuple<Solution,double> generate_neighbor(
         // std::cout <<"neighbor_solution.coordpair.size(): " << neighbor_solution.coordpair.size() << std::endl;
         // std::cout << "neighbor_solution.count: " << neighbor_solution.count << std::endl;
         double total_weight = 0.0;
-            for (int i = 0; i < neighbor_solution.count; ++i) {
-                double usage = result.used_road_flow[0][i];
-                for (int j = 1; j < result.used_road_flow.size(); ++j) {
-                    usage += result.used_road_flow[j][i];
-                }
-                if(result.built_length_list[i] == 0)
-                {std::uniform_real_distribution<> dis(0.0, 1.0);
-                double random = dis(gen);
-                if (random < 0.05) 
-                {weights[i] = 0;
-                } else{
-                weights[i] = std::numeric_limits<double>::max();} 
-                }
-                else{weights[i] = result.built_length_list[i] / (usage + 1e-6); }// Weight is inversely proportional to usage
-                total_weight += weights[i];
+                   for (int i = 0; i < neighbor_solution.count; ++i) {
+            // Calculate the total timings for the current road
+            double total_timing = 0.0;
+            for (const auto& step_timing : neighbor_solution.timings[i]) {
+                total_timing += step_timing;
             }
+            if (total_timing == 0) {
+                // Large weight for roads that were never built
+                weights[i] = 1.0; // Assign a higher base weight (adjust as needed)
+            } else {
+                // Smaller weight for roads that were built
+                weights[i] = 3.0; // Inversely proportional to the timing
+            }
+            total_weight += weights[i];
+        }
         // Normalize weights
         if (total_weight == 0) {total_weight = 1;}
         for (auto& weight : weights) {
             weight /= total_weight;
         }
         //print weights
-        for (int i = 0; i < weights.size(); i++) {
-            std::cout << "weights[" << i << "]: " << weights[i] << std::endl;
-        }
+        // for (int i = 0; i < weights.size(); i++) {
+        //     std::cout << "weights[" << i << "]: " << weights[i] << std::endl;
+        // }
         // Choose a random pair to modify based on weights
         std::random_device rd;
         std::mt19937 gen(rd()); // Random number generator
@@ -649,12 +916,8 @@ std::tuple<Solution,double> generate_neighbor(
         std::uniform_int_distribution<> dir_dist(0, DIRECTIONS.size() - 1); // Distribution for directions
         std::discrete_distribution<> dist(weights.begin(), weights.end()); // Weighted random distribution
 
-        // std::cout << "dist: " << dist(gen) << std::endl;
-        // std::cout <<"dir_dist: " << dir_dist(gen) << std::endl;
-        // std::cout <<"coord_dist: " << coord_dist(gen) << std::endl;
         // Generate random index based on weighted distribution
         size_t to_modify = dist(gen);
-        // std::cout << "to_modify: " << to_modify << std::endl;
         // Modify the selected coordinate pair
         Coord coord1 = {coord_dist(gen), coord_dist(gen)};
         auto [dx, dy] = DIRECTIONS[dir_dist(gen)];
@@ -662,87 +925,62 @@ std::tuple<Solution,double> generate_neighbor(
 
         // Ensure the new coord2 is within bounds
         while (0 > coord2.x || coord2.x >= GRID_SIZE_X || 0 > coord2.y || coord2.y >= GRID_SIZE_Y) {
-            std::cout << "Reassignment while loop" << std::endl;
+            // std::cout << "Reassignment while loop" << std::endl;
         coord1 = {coord_dist(gen), coord_dist(gen)};
         coord2 = {coord1.x + dx, coord1.y + dy};
         }
         auto coordpair = normalize_pair(coord1, coord2);
         // Replace the selected coordinate pair with the new one
         neighbor_solution.coordpair[to_modify] = coordpair;
-        std::cout << "to_modify: " << to_modify << std::endl;
-        std::cout << "coordpair: (" << coordpair.coords[0].x << ", " << coordpair.coords[0].y << "), ("
-                  << coordpair.coords[1].x << ", " << coordpair.coords[1].y << ")\n";
-        std::cout << "reassignment finished" << std::endl;
+        // std::cout << "to_modify: " << to_modify << std::endl;
+        // std::cout << "coordpair: (" << coordpair.coords[0].x << ", " << coordpair.coords[0].y << "), ("
+        //           << coordpair.coords[1].x << ", " << coordpair.coords[1].y << ")\n";
+        // std::cout << "reassignment finished" << std::endl;
+        }
+        //print neighbor_solution coordpair
+        std::cout << "neighbor_solution after" << std::endl;
+        for (int i = 0; i < neighbor_solution.count; i++) {
+            std::cout << "neighbor_solution.coordpair[" << i << "]: (" << neighbor_solution.coordpair[i].coords[0].x << ", "
+                      << neighbor_solution.coordpair[i].coords[0].y << "), (" << neighbor_solution.coordpair[i].coords[1].x << ", "
+                      << neighbor_solution.coordpair[i].coords[1].y << ")\n";
+            std::cout << " timing[" << i << "]: " << std::endl;
+            for (int j = 0; j < neighbor_solution.step; j++) {
+                std::cout <<  neighbor_solution.timings[i][j] << " ";
+            }
+            std::cout << std::endl;
         }
 
-            // std::cout << "result.used_road_flow[0].size()" << result.used_road_flow[0].size() << std::endl;
-            // std::cout << "neighbor_solution.count " << neighbor_solution.count << std::endl;
+        TemporaryRoads temp;
+        temp.count = neighbor_solution.count;
+        temp.coordpair = neighbor_solution.coordpair;
+        temp.statuslist = std::vector<Status>(neighbor_solution.count, {0, 0});
 
-            // std::cout << "neighbor_solution.timings after" << std::endl;
-            // if (result.used_road_flow[0].size() != neighbor_solution.count) {
-            //     std::clog << "Error in deletion: used_road_flow size does not match neighbor_solution.count" << std::endl;
-            //     std::abort();
-            // }
+       auto [timing,min_cost,pathlist] = optimizeRoadConstruction(allocations,soil_amount,temp);
+       neighbor_solution.timings = timing;
 
-            // if (result.used_road_flow[0].size() > 1000) {
-            //     std::clog << "Error in deletion: used_road_flow size is too large" << std::endl;
-            //     std::abort();
-            // }
-
-            // for (int i = 0; i < neighbor_solution.count; ++i) {
-            //     std::cout << "neighbor_solution.timings[" << i << "]" << std::endl;
-            //     for (int j = 0; j < neighbor_solution.step; ++j) {
-            //         std::cout << neighbor_solution.timings[i][j] << " ";
-            //     }
-            //     std::cout << std::endl;
-            // }
-            // std::cout << "result.used_road_flow after" << std::endl;
-            // for (int i = 0; i < result.size; i++) {
-                
-            //     std::cout << "result.used_road_flow[" << i << "]: " << std::endl;
-            //     for (int j = 0; j < result.used_road_flow[i].size(); j++) {
-            //         std::cout <<  result.used_road_flow[i][j] << " ";
-            //     }
-            //     std::cout << std::endl;
-            // }
-
-    // Step 2: Set all timings to 1 and evaluate the solution
-    for (auto& timing : neighbor_solution.timings) {
-        std::fill(timing.begin(), timing.end(), 1);
-    }
-    auto [local_result,local_operate_cost,local_builtlength] = process_allocations(allocations, neighbor_solution, soil_amount);
-    // Print local_result.used_road_flow
-    std::cout << std::endl;
-    // std::cout << "local_result after step 2" << std::endl;
-    // for (int i = 0; i < local_result.size; i++) {
-    //     for (int j = 0; j < local_result.used_road_flow[i].size(); j++) {
-    //         std::cout << "local_result.used_road_flow[" << i << "][" << j << "]: " << local_result.used_road_flow[i][j] << std::endl;
-    //     }
-    // }
-    // std::cout <<"step 3" << std::endl;
-    // Step 3: Adjust timings based on used_temp_list
-    for (size_t i = 0; i < neighbor_solution.step; ++i) {
-        for (size_t j = 0; j < neighbor_solution.count; ++j) {
-            if (local_result.used_road_flow[i][j] == 0) {
-                neighbor_solution.timings[j][i] = 0;
-            }
-            else {
-                neighbor_solution.timings[j][i] = 1;
-            }
+       //print path,timing,min_cost
+        std::cout << "pathlist after optimize" << std::endl;
+        for (int i = 0; i < pathlist.size(); i++) {
+        std::cout << "pathlist[" << i << "]: ";
+        for (int j = 0; j < pathlist[i].size(); j++) {
+            std::cout << "(" << pathlist[i].coord[j].x << ", " << pathlist[i].coord[j].y << ") ";
         }
-    }
-    // std::cout << "neighbor_solution after step 3" << std::endl;
-    // for (int i = 0; i < neighbor_solution.count; ++i) {
-    //     std::cout << "neighbor_solution.coordpair[" << i << "]: (" << neighbor_solution.coordpair[i].coords[0].x << ", "
-    //               << neighbor_solution.coordpair[i].coords[0].y << "), (" << neighbor_solution.coordpair[i].coords[1].x << ", "
-    //               << neighbor_solution.coordpair[i].coords[1].y << ")\n";
-    //     for (int j = 0; j < neighbor_solution.step; ++j) {
-    //         std::cout << "  timing[" << j << "]: " << neighbor_solution.timings[i][j] << "\n";
-    //     }
-    // }
-    auto [new_result,total_cost] = evaluate_design(allocations,soil_amount,neighbor_solution);
-    result = new_result;
-    return {neighbor_solution,total_cost};
+        std::cout << std::endl;
+        }
+        std::cout << std::endl;
+        std::cout << "min_cost after optimize: " << min_cost << std::endl;
+        std::cout << "timing after optimize" << std::endl;
+        for (int i = 0; i < timing.size(); i++) {
+            std::cout << "neighbor_solution.coordpair[" << i << "]: (" << neighbor_solution.coordpair[i].coords[0].x << ", "
+                      << neighbor_solution.coordpair[i].coords[0].y << "), (" << neighbor_solution.coordpair[i].coords[1].x << ", "
+                      << neighbor_solution.coordpair[i].coords[1].y << ") ";
+            for (int j = 0; j < timing[i].size(); j++) {
+                std::cout << timing[i][j] << " ";
+            }
+            std::cout << std::endl;
+        }
+
+    return {neighbor_solution,min_cost};
 }
 
 void simulated_annealing(std::vector<Allocation>& allocations,  Solution& timing, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],double alpha, int max_iter) {
@@ -751,7 +989,6 @@ void simulated_annealing(std::vector<Allocation>& allocations,  Solution& timing
     std::cout << " evaluate_design finished" << std::endl;
     std::cout << "current_score: " << current_score << std::endl;
     std::cout << "result.size: " << Result.size << std::endl;
-
 
     Solution best_solution = current_solution;
     double best_score = current_score;
@@ -796,7 +1033,7 @@ void simulated_annealing(std::vector<Allocation>& allocations,  Solution& timing
         }
 
         std::cout << "current_score: " << current_score << std::endl;
-        std::tie(neighbor_solution,neighbor_score) = generate_neighbor(current_solution, Result, allocations, soil_amount);
+        std::tie(neighbor_solution,neighbor_score) = generate_neighbor(current_solution, allocations, soil_amount);
         std::cout << std::endl;
         std::cout << "neighbor_solution after" << std::endl;
         std::cout << "neighbor_solution.count" << neighbor_solution.count << std::endl;
@@ -878,7 +1115,7 @@ void simulated_annealing(std::vector<Allocation>& allocations,  Solution& timing
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
     std::cout << "test" << std::endl;
-    int count = 3;
+    int count = 5;
     Coord coord1 = {0, 1};
     Coord coord2 = {1, 0};
     //Initialize soil_amount
@@ -889,14 +1126,12 @@ int main() {
         {0, 0, 0, 0}};
     // Initialize allocations
     std::vector<Allocation> allocations = {
-        {{1, 1}, {2, 2}, 1.0},
-        {{0, 0}, {3, 3}, 3.0},
-        {{0, 1}, {3, 0}, 2.0},
-        {{1, 0}, {2, 1}, 1.0}
+        {{0, 0}, {1, 3}, 1.0},
+        {{0, 1}, {1, 3}, 3.0}
         };
     int step_num = allocations.size();
     std::cout << "step_num: " << step_num << std::endl;
-    CoordPair coordpair[count] = {{{{0, 0}, {1, 1}}}, {{{2, 2}, {3, 3}}}, {{{1, 0}, {0, 1}}}};
+    CoordPair coordpair[count] = {{{{0, 0}, {1, 1}}}, {{{0, 1}, {1, 2}}}, {{{0, 2}, {1, 3}}},{{{0, 0}, {0, 1}}},{ {{0, 1}, {0, 2}}}};
     //normalize coordpair
     for (int i = 0; i < count; i++) {
         coordpair[i] = normalize_pair(coordpair[i].coords[0], coordpair[i].coords[1]);
@@ -915,7 +1150,7 @@ int main() {
     for (int i = 0; i < count; i++) {
         solution.coordpair.push_back(coordpair[i]);
     }
-    solution.timings = {{1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}};
+    solution.timings = std::vector<std::vector<int>>(count, std::vector<int>(step_num, 0));
     for(int i = 0; i < count; i++){
         if(solution.timings[i].size() != solution.step){
             std::clog << "Error: The number of elements in coordpair does not match the number of elements in the solution" << std::endl;
@@ -943,13 +1178,13 @@ int main() {
     // }
 Solution new_solution;
 double cost;
-// for (size_t i = 0; i<5; i++){
-//     std::cout << std::endl;
-//     std::cout <<"in loop" << i << std::endl;
-//     std::tie(new_solution,cost) =  generate_neighbor(solution, result, allocations, soil_amount);
-//     solution = new_solution;
-// }
-    simulated_annealing(allocations, solution, soil_amount, 0.95, 1000);
+for (size_t i = 0; i<1; i++){
+    std::cout << std::endl;
+    std::cout <<"in loop" << i << std::endl;
+    std::tie(new_solution,cost) =  generate_neighbor(solution, allocations, soil_amount);
+    solution = new_solution;
+}
+    // simulated_annealing(allocations, solution, soil_amount, 0.95, 1000);
     auto end = std::chrono::high_resolution_clock::now();
 
     // 経過時間を取得 (ミリ秒)

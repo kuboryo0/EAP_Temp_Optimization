@@ -142,8 +142,8 @@ allocation = []
 for f in range(num_fill):
     for c in range(num_cut):
         if pulp.value(x_vars[c][f]) != 0:
-            # print(f"  切土地点 ({cut_indices[c][0]}) から 盛土地点 ({fill_indices[f][0]}) に土が{pulp.value(x_vars[c][f])}運ばれました")
-            allocation.append((cut_indices[c][0],fill_indices[f][0]))
+            print(f"  切土地点 ({cut_indices[c][0]}) から 盛土地点 ({fill_indices[f][0]}) に土が{pulp.value(x_vars[c][f])}運ばれました")
+            allocation.append((cut_indices[c][0],fill_indices[f][0],pulp.value(x_vars[c][f])))
 
 def calculate_distance_2D(a,b):
     return np.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2)
