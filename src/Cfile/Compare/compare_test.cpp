@@ -12,14 +12,18 @@
 #include <chrono>
 
 #define GRID_SIZE_X 12
+
 #define GRID_SIZE_Y 4
 #define STEPS 10
-#define TEMP_EFF 0.5 // Temporary road efficiency
+#define VELOCITY_ROUGH 24.0
+#define VELOCITY_PAVE 36.0
+#define TEMP_EFF VELOCITY_ROUGH/VELOCITY_PAVE // Temporary road efficiency
 #define GRID_SIZE 150
-#define V_truck 30.0
-#define TRUCK_NUM 8
-#define DIRECTIONS_COUNT 8
+#define V_truck 40.0
+#define TRUCK_NUM 1
+#define DIRECTIONS_COUNT 1
 #define INF std::numeric_limits<double>::infinity()
+#define COST_HOUR 2000.0
 
 struct Coord {
     int x, y;
@@ -454,17 +458,13 @@ std::tuple<Result,double,double> process_allocations(std::vector<Allocation>& al
 double cost_calculation( double operate_cost,double built_length) {
     // 定数（適宜変更してください）
     // const double grid_length = GRID_SIZE;            // グリッドの長さ (m)
-    const double depth_unit = 1.0;            // 深さの単位 (m)
-    const double speed_rough_road = 36.0;     // 速度 (km/h)
-    const double cost_hour = 2000.0;            // 1時間あたりのコスト ($)
-    const double volume_unit_truck = 30.0;    // 1台あたりの容量 (m3)
     const double work_eff = 0.75;              // 作業効率
     const double construction_temp = 17.5;   // 仮設道路の建設コスト係数 ($/m)
 
     // 運搬距離コスト
     // double soil_volume = grid_length * grid_length * depth_unit; // 1ブロックの土量 (m3)
-    double time_average = operate_cost * GRID_SIZE / (speed_rough_road * 1000.0); // 所要時間 (h)
-    double cost_construction = cost_hour * time_average / work_eff;
+    double time_average = operate_cost * GRID_SIZE / (VELOCITY_ROUGH * 1000.0); // 所要時間 (h)
+    double cost_construction = COST_HOUR * time_average / work_eff;
     // 仮設道路の建設コスト
     double cost_road = built_length * construction_temp * GRID_SIZE;
     // // std::cout << "cost_operation: " << operate_cost << std::endl;
@@ -931,7 +931,7 @@ std::tuple<std::vector<std::vector<int>>, double,std::vector<Path>> DynamicProgr
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
     std::cout << "test" << std::endl;
-    int count = 7;
+
     Coord coord1 = {0, 1};
     Coord coord2 = {1, 0};
     //Initialize soil_amount
@@ -971,34 +971,89 @@ int main() {
     //     {{1, 0}, {2, 1}, 15000.0},
     //     {{2, 1}, {2, 2}, 15000.0},
     //     };
-    std::vector<Allocation> allocations = {
+    // std::vector<Allocation> allocations =  {
+    //     {{3, 3}, {3, 2}, 22500.0},
+    //     {{3, 3}, {1, 3}, 22500.0},
+    //     {{2, 3}, {1, 3}, 22500.0},
+    //     {{3, 1}, {3, 2}, 22500.0},
+    //     {{1, 2}, {0, 3}, 22500.0},
+    //     {{3, 0}, {0, 0}, 22500.0},
+    //     {{2, 2}, {0, 2}, 22500.0},
+    //     {{2, 1}, {1, 1}, 22500.0},
+    //     {{2, 0}, {0, 0}, 22500.0},
+    //     {{1, 0}, {0, 1}, 22500.0}
+    // };   
+    std::vector<Allocation> allocations =  {
         {{11, 1}, {10, 2}, 2500.0},
-        {{11, 1}, {9, 2}, 5400.0}, 
-        {{11, 0}, {10, 0}, 6900.0}, 
-        {{11, 0}, {9, 0}, 4300.0}, 
-        {{10, 1}, {9, 2}, 12100.0}, 
-        {{10, 1}, {9, 1}, 2200.0}, 
+        {{11, 1}, {9, 2}, 5400.0},
+        {{11, 0}, {10, 0}, 6900.0},
+        {{11, 0}, {9, 0}, 4300.0},
+        {{10, 1}, {9, 2}, 12100.0},
+        {{10, 1}, {9, 1}, 2200.0},
         {{8, 3}, {9, 3}, 100.0},
         {{8, 3}, {9, 2}, 2200.0},
-        {{4, 1}, {9, 2}, 8800.0}, 
+        {{3, 1}, {9, 2}, 8800.0},
         {{5, 0}, {9, 0}, 8000.0},
         {{4, 0}, {9, 0}, 4000.0},
         {{3, 0}, {9, 0}, 5700.0},
         {{5, 2}, {8, 2}, 14200.0},
         {{4, 2}, {8, 2}, 24300.0},
-        {{3, 1}, {8, 2}, 34000.0},
-    };        
-
+        {{4, 1}, {8, 2}, 17400.0},
+        {{3, 1}, {8, 2}, 16600.0},
+        {{6, 1}, {8, 1}, 8100.0},
+        {{3, 1}, {8, 1}, 1800.0},
+        {{3, 0}, {8, 0}, 2300.0},
+        {{2, 2}, {7, 3}, 2700.0},
+        {{4, 1}, {7, 2}, 5600.0},
+        {{3, 2}, {7, 2}, 22100.0},
+        {{2, 2}, {7, 2}, 6700.0},
+        {{5, 1}, {7, 1}, 22200.0},
+        {{3, 1}, {7, 1}, 2600.0},
+        {{4, 0}, {7, 0}, 5000.0},
+        {{3, 1}, {7, 0}, 6200.0},
+        {{4, 3}, {6, 3}, 9000.0},
+        {{3, 2}, {6, 3}, 900.0},
+        {{2, 2}, {6, 2}, 12400.0},
+        {{3, 0}, {6, 0}, 1000.0},
+        {{3, 3}, {5, 3}, 1200.0},
+        {{2, 3}, {5, 3}, 900.0},
+        {{2, 2}, {5, 3}, 3800.0},
+        {{2, 3}, {1, 3}, 1400.0},
+        {{2, 2}, {0, 1}, 2500.0},
+        {{1, 2}, {0, 2}, 3700.0},
+        {{2, 1}, {1, 0}, 3700.0},
+        {{2, 1}, {0, 1}, 30100.0},
+        {{1, 2}, {0, 1}, 18800.0},
+        {{2, 0}, {0, 0}, 3700.0},
+        {{1, 1}, {0, 1}, 11200.0},
+        {{1, 1}, {0, 0}, 11300.0}
+    };
     int step_num = allocations.size();
     std::cout << "step_num: " << step_num << std::endl;
+    int count = 10;
+    // CoordPair coordpair[count] = {
+    //     {{{1, 1}, {2, 1}}},
+    //     {{{3, 0}, {2, 0}}},
+    //     {{{1, 0}, {2, 0}}},
+    //     {{{0, 0}, {1, 0}}},
+    //     {{{0, 3}, {1, 2}}},
+    //     {{{1, 0}, {0, 1}}},
+    //     {{{1, 3}, {2, 3}}},
+    //     {{{3, 1}, {3, 2}}},
+    //     {{{0, 2}, {1, 2}}}
+    // };
+    // CoordPair coordpair[count] = {{{{5, 2}, {6, 2}}},{{{7, 2}, {6, 2}}}};
     CoordPair coordpair[count] = {
-        {{{6, 2}, {5, 2}}}, 
-        {{{6, 2}, {7, 2}}}, 
-        {{{6, 0}, {7, 0}}}, 
-        {{{4, 2}, {5, 2}}}, 
-        {{{5, 0}, {6, 0}}}, 
-        {{{5, 0}, {4, 0}}}, 
-        {{{3, 2}, {4, 2}}}
+        {{{0, 1}, {1, 1}}},
+        {{{1, 1}, {2, 1}}},
+        {{{2, 1}, {3, 1}}},
+        {{{3, 1}, {4, 1}}},
+        {{{4, 1}, {5, 1}}},
+        {{{5, 1}, {6, 1}}},
+        {{{6, 1}, {7, 2}}},
+        {{{7, 2}, {8, 2}}},
+        {{{8, 2}, {9, 2}}},
+        {{{9, 2}, {10, 2}}}
     };
     //normalize coordpair
     for (int i = 0; i < count; i++) {
@@ -1101,29 +1156,29 @@ auto [solution_LS,cost_LS,pathlist_LS] =  local_search(solution, allocations, so
     }
 
 
-// //動的計画
-auto [timing_DP,cost_DP,pathlist_DP] = DynamicPrograming(allocations, soil_amount, current_temps);
-    std::cout << std::endl;
-    // // Print DynamicPrograming result
-    std::cout << "DynamicPrograming cost: " << cost_DP << std::endl;
-    for (int i = 0; i < count; i++) {
-        std::cout << "solution_DP.coordpair[" << i << "]: (" << solution.coordpair[i].coords[0].x << ", "
-                  << solution.coordpair[i].coords[0].y << "), (" << solution.coordpair[i].coords[1].x << ", "
-                  << solution.coordpair[i].coords[1].y << ")\n";
-        std::cout << "  timing: ";
-        for (int j = 0; j < timing_DP[i].size(); j++) {
-            std::cout  << timing_DP[i][j] << " ";
-        }
-        std::cout << std::endl;
-    }
-    //print path
-    for (int i = 0; i < pathlist_DP.size(); i++) {
-        std::cout << "pathlist_DP[" << i << "]: ";
-        for (int j = 0; j < pathlist_DP[i].coord.size(); j++) {
-            std::cout << " (" << pathlist_DP[i].coord[j].x << ", " << pathlist_DP[i].coord[j].y << ")";
-        }
-        std::cout << std::endl;
-    }
+// // //動的計画
+// auto [timing_DP,cost_DP,pathlist_DP] = DynamicPrograming(allocations, soil_amount, current_temps);
+//     std::cout << std::endl;
+//     // // Print DynamicPrograming result
+//     std::cout << "DynamicPrograming cost: " << cost_DP << std::endl;
+//     for (int i = 0; i < count; i++) {
+//         std::cout << "solution_DP.coordpair[" << i << "]: (" << solution.coordpair[i].coords[0].x << ", "
+//                   << solution.coordpair[i].coords[0].y << "), (" << solution.coordpair[i].coords[1].x << ", "
+//                   << solution.coordpair[i].coords[1].y << ")\n";
+//         std::cout << "  timing: ";
+//         for (int j = 0; j < timing_DP[i].size(); j++) {
+//             std::cout  << timing_DP[i][j] << " ";
+//         }
+//         std::cout << std::endl;
+//     }
+//     //print path
+//     for (int i = 0; i < pathlist_DP.size(); i++) {
+//         std::cout << "pathlist_DP[" << i << "]: ";
+//         for (int j = 0; j < pathlist_DP[i].coord.size(); j++) {
+//             std::cout << " (" << pathlist_DP[i].coord[j].x << ", " << pathlist_DP[i].coord[j].y << ")";
+//         }
+//         std::cout << std::endl;
+//     }
     // simulated_annealing(allocations, solution, soil_amount, 0.95, 1000);
     auto end = std::chrono::high_resolution_clock::now();
 

@@ -621,26 +621,27 @@ for [(i, j),k] in cut_indices:
 for [(i, j),k] in fill_indices:
     soil_amount[int(i),int(j)] = -k
 
-solution = []
+solution = [[[(2, 1), (3, 0)], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]], [[(0, 0), (1, 0)], [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]], [[(2, 2), (1, 2)], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]], [[(3, 1), (3, 2)], [1, 1, 0, 0, 1, 0, 1, 1, 1, 0]], [[(3, 2), (3, 3)], [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]], [[(0, 1), (1, 1)], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]], [[(1, 2), (0, 2)], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]], [[(1, 3), (2, 3)], [1, 1, 0, 0, 1, 0, 1, 1, 1, 0]], [[(0, 3), (1, 2)], [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]], [[(3, 3), (2, 3)], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]]]
 
 start_time = time.time()
 allocation = earth_allocation(cut_indices,fill_indices)
 # print("allocation",allocation)
 # allocation = [((1,0),(2,1)),((1,0),(2,1))]
 
-# パラメータの設定
-initial_temprature = 1000
-# final_temprature = 1
-alpha = 0.99
-max_iter = 10
+print(evaluate_design(solution))
+# # パラメータの設定
+# initial_temprature = 1000
+# # final_temprature = 1
+# alpha = 0.99
+# max_iter = 10
 
 
-best_solution, best_score, best_route,best_solution_flow,current_solution_flow,neighbor_solution_flow,best_score_loop = simulated_annealing(allocation,solution)
-end_time = time.time()
-print("best_solution",best_solution)
-print("best_score",best_score)
-print("best_route",best_route)
-print("best_score_loop",best_score_loop)
-print("time",end_time-start_time)
+# best_solution, best_score, best_route,best_solution_flow,current_solution_flow,neighbor_solution_flow,best_score_loop = simulated_annealing(allocation,solution)
+# end_time = time.time()
+# print("best_solution",best_solution)
+# print("best_score",best_score)
+# print("best_route",best_route)
+# print("best_score_loop",best_score_loop)
+# print("time",end_time-start_time)
 
-plot_route(best_route,best_solution,cut_indices,fill_indices)
+# plot_route(best_route,best_solution,cut_indices,fill_indices)
