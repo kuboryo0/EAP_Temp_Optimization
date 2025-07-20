@@ -10,9 +10,10 @@
 #include <random> // for std::discrete_distribution
 #include <ctime> 
 #include <chrono>
+#include <stack>
 
 // Objective function parameters
-#define GRID_SIZE_X 12
+#define GRID_SIZE_X 8
 #define GRID_SIZE_Y 4
 #define DIRECTIONS_COUNT 8
 #define INF std::numeric_limits<double>::infinity()
@@ -21,13 +22,16 @@
 // #define VELOCITY_ROUGH 24.0
 #define VELOCITY_ROUGH 10.0
 #define VELOCITY_PAVE 40.0
+#define VELOCITY_SHOVEL 5.0
 #define TEMP_EFF VELOCITY_ROUGH/VELOCITY_PAVE // Temporary road efficiency
 #define GRID_SIZE 150
-#define V_truck 40.0
+#define V_TRUCK 40.0
 #define TRUCK_NUM 1
 #define COST_HOUR 2000.0
 #define WORK_EFF 0.75
 #define CONSTRUCTION_TEMP 17.5
+#define CONSTRUCTION_SUB_TEMP 6.0
+#define CONSTRUCTION_TEMP_DIFF (CONSTRUCTION_TEMP - CONSTRUCTION_SUB_TEMP)
 
 #define entranceXPostion 0
 #define entranceYPostion 2
@@ -35,12 +39,39 @@
 
 // Simulated Annealing parameters
 #define alpha 0.95
-#define max_iter 1
+#define max_iter 100
 #define initialTemperature 1000.0
 
 struct Coord {
     int x, y;
+    bool operator==(const Coord& other) const {
+        return x == other.x && y == other.y;
+    }
 };
+
+namespace std {
+    template <>
+    struct hash<Coord> {
+        size_t operator()(const Coord& c) const {
+            return hash<int>()(c.x) ^ (hash<int>()(c.y) << 1);
+        }
+    };
+}
+
+const std::vector<Coord> DIRECTIONS = {
+    {-1, -1}, {-1, 0}, {-1, 1},
+    {0, -1},          {0, 1},
+    {1, -1},  {1, 0}, {1, 1}
+};
+
+const std::unordered_map<Coord, int> DIRECTION_TO_INDEX = []() {
+    std::unordered_map<Coord, int> m;
+    for (int i = 0; i < DIRECTIONS.size(); ++i) {
+        m[DIRECTIONS[i]] = i;
+    }
+    return m;
+}();
+
 
 struct CoordPair {
     Coord coords[2];
@@ -163,11 +194,84 @@ struct Allocation {
     Coord start;
     Coord goal;
     double volume;
+        bool operator==(const Allocation& other) const {
+        return start.x == other.start.x &&
+               start.y == other.start.y &&
+               goal.x == other.goal.x &&
+               goal.y == other.goal.y &&
+               volume == other.volume;
+    }
+};
+
+struct AllocationOrder {
+    std::vector <Allocation> formerAllocations;
+    std::vector <Allocation> latterAllocations;
+
+    void printParameters() {
+        std::cout << "formerAllocations: " << std::endl;
+        for (const auto& allocation : formerAllocations) {
+            std::cout << "start: (" << allocation.start.x << ", " << allocation.start.y << "), goal: (" 
+                      << allocation.goal.x << ", " << allocation.goal.y << "), volume: " << allocation.volume << std::endl;
+        }
+        std::cout << "latterAllocations: " << std::endl;
+        for (const auto& allocation : latterAllocations) {
+            std::cout << "start: (" << allocation.start.x << ", " << allocation.start.y << "), goal: (" 
+                      << allocation.goal.x << ", " << allocation.goal.y << "), volume: " << allocation.volume << std::endl;
+        }
+    }
+
+    void printParametersForPlot() {
+        std::cout << "[" << std::endl;
+        for (const auto& allocation : formerAllocations) {
+            std::cout << "[(" << allocation.start.x << ", " << allocation.start.y << "), (" 
+                      << allocation.goal.x << ", " << allocation.goal.y << "), " << allocation.volume << "]," << std::endl;
+        }
+        for (const auto& allocation : latterAllocations) {
+            std::cout << "[(" << allocation.start.x << ", " << allocation.start.y << "), (" 
+                      << allocation.goal.x << ", " << allocation.goal.y << "), " << allocation.volume << "]," << std::endl;
+        }
+        std::cout << "]" << std::endl;
+    }
+
+    std::vector<Allocation> orderToVector() const {
+        std::vector<Allocation> orderedAllocations;
+        orderedAllocations.reserve(formerAllocations.size() + latterAllocations.size());
+        orderedAllocations.insert(orderedAllocations.end(), formerAllocations.begin(), formerAllocations.end());
+        orderedAllocations.insert(orderedAllocations.end(), latterAllocations.begin(), latterAllocations.end());
+        return orderedAllocations;
+    }
 };
 
 struct CoordPairWithTiming {
     CoordPair coordpair;
     std::vector<int> timing;
+};
+
+enum RoadType {
+    PROHIBITED = -1, // 通行禁止
+    NONE = 0, // 道路なし
+    UNPAVED = 1,      // 未舗装道路
+    PAVED = 2        // 舗装道路
+};
+
+struct NeighborInfo {
+    Coord neighbor; // 隣接座標
+    RoadType type; // 道路の種類
+};
+
+struct RoadAroundCenter {
+    Coord center; // 中心座標
+    std::vector<NeighborInfo> neighbors; // 隣接する座標とその道路の種類
+     
+    void print() const {
+        std::cout << "Center: (" << center.x << ", " << center.y << ")" << std::endl;
+        std::cout << "Neighbors: ";
+        for (const auto& neighbor : neighbors) {
+            std::cout << "(" << neighbor.neighbor.x << ", " << neighbor.neighbor.y << ") - Type: " 
+                      << static_cast<int>(neighbor.type) << " ";
+        }
+        std::cout << std::endl;
+    }
 };
 
 struct Node {
@@ -430,6 +534,8 @@ struct connectNetworkList {
     }
 };
 
+//costを計算する際に使用する座標の距離計算関数
+//----------------------------------------------
 double calculate_distance_3D(const Coord& a, const Coord& b, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
     double dx = a.x - b.x;
     double dy = a.y - b.y;
@@ -437,6 +543,49 @@ double calculate_distance_3D(const Coord& a, const Coord& b, const double soil_a
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+double calculate_distance_2D(const Coord& a, const Coord& b, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    double dx = a.x - b.x;
+    double dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+double heuristic(const Coord& a, const Coord& b, const  double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    return TEMP_EFF * calculate_distance_3D(a, b, soil_amount);
+}
+
+double getCost(const Coord& current, const Coord& neighbor, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y], const TemporaryRoads& temporary_roads,double temp_eff = TEMP_EFF) {
+    double distance = calculate_distance_3D(current, neighbor, soil_amount);
+    double current_distance = distance / 2;
+    double neighbor_distance = distance / 2;
+
+    CoordPair search_pair = normalize_pair(current, neighbor);
+    // auto it = std::find(temporary_roads.coordpair.begin(), temporary_roads.coordpair.end(), search_pair);
+    auto it = std::find_if(
+        temporary_roads.roadStatusList.begin(),
+        temporary_roads.roadStatusList.end(),
+        [&search_pair](const TemporaryRoadStatus& road) {
+            return (road.coordpair.coords[0].x == search_pair.coords[0].x && road.coordpair.coords[0].y == search_pair.coords[0].y &&
+                    road.coordpair.coords[1].x == search_pair.coords[1].x && road.coordpair.coords[1].y == search_pair.coords[1].y);
+        });
+    if (it != temporary_roads.roadStatusList.end()) {
+        size_t index = std::distance(temporary_roads.roadStatusList.begin(), it);
+        if (temporary_roads.roadStatusList[index].status[0] == 1 && temporary_roads.roadStatusList[index].status[1] == 1) {
+            current_distance *= temp_eff;
+            neighbor_distance *= temp_eff;
+        } else if (temporary_roads.roadStatusList[index].status[0] == 1 || temporary_roads.roadStatusList[index].status[1] == 1) {
+            neighbor_distance *= temp_eff;
+        }
+    }
+    return current_distance + neighbor_distance;
+}
+
+double getCost(const Coord& current, const Coord& neighbor, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    double distance = calculate_distance_3D(current, neighbor, soil_amount);
+    return distance;
+}
+//-----------------------------------------------
+
+// 土壌量の合計が0であることを確認する関数
 void checkSoilAmountTotal(const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
     double total_soil_amount = 0;
     for (int i = 0; i < GRID_SIZE_X; i++) {
@@ -450,7 +599,8 @@ void checkSoilAmountTotal(const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
     }
 }
 
-
+//初期化用関数
+//----------------------------------------------
 
 Result initiallizedResult(Solution solution){
     Result result;
@@ -502,8 +652,11 @@ TemporaryRoads initializedTemporaryRoads(const int& roadNum,const std::vector<Co
         }
         return temp;
 }
+//-------------------------------------------------------------
 
 
+// 乱数生成関数
+//---------------------------------------------
 // 整数乱数を生成する関数
 int generateRandomInt(int min, int max) {
     std::random_device rd;
@@ -527,6 +680,7 @@ size_t generateWeightedRandomIndex(const std::vector<double>& weights) {
     std::discrete_distribution<> dist(weights.begin(), weights.end());
     return dist(gen);
 }
+//----------------------------------------------
 
 void removeTemporaryRoads(const Allocation& allocation, TemporaryRoads& temps) {
     int startXPosition = allocation.start.x, startYPostion = allocation.start.y;
@@ -546,10 +700,13 @@ void removeTemporaryRoads(const Allocation& allocation, TemporaryRoads& temps) {
         }
     }
 }
+void removeTemporaryRoads(const Allocation& allocation, std::vector<RoadAroundCenter>& roadStatusVector) {
+    int startindex = allocation.start.x * GRID_SIZE_Y + allocation.start.y;
+    int startTogoalIndex = (allocation.goal.x-allocation.start.x) * GRID_SIZE_Y + (allocation.goal.y-allocation.start.y);
+    int goalindex = allocation.goal.x * GRID_SIZE_Y + allocation.goal.y;
+    int goalTostartIndex = (allocation.start.x-allocation.goal.x) * GRID_SIZE_Y + (allocation.start.y-allocation.goal.y);
 
-
-double heuristic(const Coord& a, const Coord& b, const  double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
-    return TEMP_EFF * calculate_distance_3D(a, b, soil_amount);
+    roadStatusVector[]
 }
 
 
@@ -570,19 +727,66 @@ std::vector<int> buildNewRoad(
     int road_count = current_temps.roadNum;
     for (int i = 0; i < road_count; i++) {
         CoordPair road = solution.roadbuildStatusList[i].coordpair;
+        // 道路の建設が完了しているかどうかを確認
         if (solution.roadbuildStatusList[i].timings[stepNum] == 1) {
             double length = calculate_distance_3D(road.coords[0], road.coords[1], soil_amount) / 2;
-            if (current_temps.roadStatusList[i].status[0] == 0&&current_temps.roadStatusList[i].status[1] == 0) {
+            if (current_temps.roadStatusList[i].status[0] == 0 && current_temps.roadStatusList[i].status[1] == 0) {
                 built_length += length*2;
                 built_length_list[i] += length*2;
                 current_temps.roadStatusList[i].status[0] = 1;
                 current_temps.roadStatusList[i].status[1] = 1;
                 builtRoadList.push_back(i);
-            }else if (current_temps.roadStatusList[i].status[1] == 0||current_temps.roadStatusList[i].status[1] == 0) {
+            }else if (current_temps.roadStatusList[i].status[0] == 0 || current_temps.roadStatusList[i].status[1] == 0) {
                 built_length += length;
                 built_length_list[i] += length;
                 current_temps.roadStatusList[i].status[0] = 1;
                 current_temps.roadStatusList[i].status[1] = 1;
+                builtRoadList.push_back(i);
+            }
+        }
+    }
+    return builtRoadList;
+}
+
+
+std::vector<int> buildNewRoad(
+    double roadStatusMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], 
+    const int stepNum, 
+    const Solution& solution,  
+    std::vector<double>& built_length_list,
+    const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y], 
+    double& built_length
+){
+    std::vector<int> builtRoadList;
+    int road_count = solution.roadNum;
+    for (int i = 0; i < road_count; i++) {
+        CoordPair road = solution.roadbuildStatusList[i].coordpair;
+        // 道路の建設が完了しているかどうかを確認
+        if (solution.roadbuildStatusList[i].timings[stepNum] == 1) {
+            double length = calculate_distance_3D(road.coords[0], road.coords[1], soil_amount) / 2;
+            int index1 = road.coords[0].x * GRID_SIZE_Y + road.coords[0].y;
+            int index2 = road.coords[1].x * GRID_SIZE_Y + road.coords[1].y;
+            if (roadStatusMatrix[index1][index2] == 0) {
+                built_length += length;
+                built_length_list[i] += length;
+                roadStatusMatrix[index1][index2] = 2;
+                builtRoadList.push_back(i);
+            }else if (roadStatusMatrix[index1][index2] == 1) {
+                built_length += length*CONSTRUCTION_TEMP_DIFF/CONSTRUCTION_TEMP; //未舗装道路を仮設道路にする場合のコスト
+                built_length_list[i] += length*CONSTRUCTION_TEMP_DIFF/CONSTRUCTION_TEMP;
+                roadStatusMatrix[index1][index2] = 2;
+                builtRoadList.push_back(i);
+            }
+
+            if (roadStatusMatrix[index2][index1] == 0) {
+                built_length += length;
+                built_length_list[i] += length;
+                roadStatusMatrix[index2][index1] = 2;
+                builtRoadList.push_back(i);
+            }else if (roadStatusMatrix[index2][index1] == 1) {
+                built_length += length*CONSTRUCTION_TEMP_DIFF/CONSTRUCTION_TEMP; //未舗装道路を仮設道路にする場合のコスト
+                built_length_list[i] += length*CONSTRUCTION_TEMP_DIFF/CONSTRUCTION_TEMP;
+                roadStatusMatrix[index2][index1] = 2;
                 builtRoadList.push_back(i);
             }
         }
@@ -614,39 +818,136 @@ void normalize_pair(CoordPair& pair) {
     pair = newPair;
 }
 
-double getCost(const Coord& current, const Coord& neighbor, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y], const TemporaryRoads& temporary_roads,double temp_eff = TEMP_EFF) {
-    double distance = calculate_distance_3D(current, neighbor, soil_amount);
-    double current_distance = distance / 2;
-    double neighbor_distance = distance / 2;
 
-    CoordPair search_pair = normalize_pair(current, neighbor);
-    // auto it = std::find(temporary_roads.coordpair.begin(), temporary_roads.coordpair.end(), search_pair);
-    auto it = std::find_if(
-        temporary_roads.roadStatusList.begin(),
-        temporary_roads.roadStatusList.end(),
-        [&search_pair](const TemporaryRoadStatus& road) {
-            return (road.coordpair.coords[0].x == search_pair.coords[0].x && road.coordpair.coords[0].y == search_pair.coords[0].y &&
-                    road.coordpair.coords[1].x == search_pair.coords[1].x && road.coordpair.coords[1].y == search_pair.coords[1].y);
-        });
-    if (it != temporary_roads.roadStatusList.end()) {
-        size_t index = std::distance(temporary_roads.roadStatusList.begin(), it);
-        if (temporary_roads.roadStatusList[index].status[0] == 1 && temporary_roads.roadStatusList[index].status[1] == 1) {
-            neighbor_distance *= temp_eff;
-        } else if (temporary_roads.roadStatusList[index].status[0] == 1 || temporary_roads.roadStatusList[index].status[1] == 1) {
-            neighbor_distance *= temp_eff;
+
+void setCostMatrix(double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    // Initialize costMatrix assuming there is no roads built yet
+    for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
+        for (int j = 0; j < GRID_SIZE_X * GRID_SIZE_Y; ++j) {
+            if(i == j) {
+                costMatrix[i][j] = 0; // 自身へのコストは0
+            } else {
+                // 他のノードへのコストは無限大で初期化
+                costMatrix[i][j] = INF;
+            }
         }
     }
-    return current_distance + neighbor_distance;
+    //隣接しているノード間のコストを計算
+    for (int x = 0; x < GRID_SIZE_X; ++x) {
+        for (int y = 0; y < GRID_SIZE_Y; ++y) {
+            Coord current = {x, y};
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    if (dx == 0 && dy == 0) continue;
+                    Coord neighbor = {x + dx, y + dy};
+                    if (neighbor.x < 0 || neighbor.x >= GRID_SIZE_X || neighbor.y < 0 || neighbor.y >= GRID_SIZE_Y) continue;
+                    costMatrix[current.x * GRID_SIZE_Y + current.y][neighbor.x * GRID_SIZE_Y + neighbor.y] = getCost(current, neighbor, soil_amount);
+                    costMatrix[neighbor.x * GRID_SIZE_Y + neighbor.y][current.x * GRID_SIZE_Y + current.y] = costMatrix[current.x * GRID_SIZE_Y + current.y][neighbor.x * GRID_SIZE_Y + neighbor.y]; // Assuming undirected graph, set both directions
+        
+                }
+            }
+        }
+    }
 }
 
+bool buildRoads(const TemporaryRoads& temporary_roads, const Coord& coord) {
+    // 仮設道路を建設する予定のある座標ならtrueを返す
+    for (const auto& roadStatus : temporary_roads.roadStatusList) {
+        if ((roadStatus.coordpair.coords[0].x == coord.x && roadStatus.coordpair.coords[0].y == coord.y) ||
+            (roadStatus.coordpair.coords[1].x == coord.x && roadStatus.coordpair.coords[1].y == coord.y)) {
+            return true; // 仮設道路が建設される予定の座標
+        }
+    }
+    return false;
+}
 
+void updateCostMatrixAfterBuild(
+    double moveMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], 
+    double buildMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y],
+    const TemporaryRoads& temporary_roads, 
+    const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],
+    const std::vector<int>& builtRoadList
+) {
+    // Update the cost matrix after building roads
+    //update the moveMatrix with the new costs for the built roads
+    for(int roadIndex : builtRoadList) {
+        Coord roadCoord1 = temporary_roads.roadStatusList[roadIndex].coordpair.coords[0];
+        Coord roadCoord2 = temporary_roads.roadStatusList[roadIndex].coordpair.coords[1];
+        int coord1Index = roadCoord1.x * GRID_SIZE_Y + roadCoord1.y;
+        int coord2Index = roadCoord2.x * GRID_SIZE_Y + roadCoord2.y;
+        // Update the cost for the road coordinates
+        moveMatrix[coord1Index][coord2Index] = getCost(roadCoord1, roadCoord2, soil_amount, temporary_roads);
+        moveMatrix[coord2Index][coord1Index] = moveMatrix[coord1Index][coord2Index]; 
+        // Update the buildMatrix for the road coordinates
+        buildMatrix[coord1Index][coord2Index] = 0; // 仮設道路が引かれたところのコストを0にする
+        buildMatrix[coord2Index][coord1Index] = 0; // 仮設道路が引かれたところのコストを0にする
+    }
+}
+
+void updateCostMatrixAfterTerrainChange(double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y], const TemporaryRoads& temporary_roads, const Allocation& allocation) {
+    // Update the cost matrix of alocation start and goal
+    int startIndex = allocation.start.x * GRID_SIZE_Y + allocation.start.y;
+    int goalIndex = allocation.goal.x * GRID_SIZE_Y + allocation.goal.y;
+
+    for(int dx=-1; dx<=1; ++dx) {
+        for(int dy=-1; dy<=1; ++dy) {
+            if(dx == 0 && dy == 0) continue; // 自分自身のコストは更新しない
+            Coord startNeighbor = {allocation.start.x + dx, allocation.start.y + dy};
+            Coord goalNeighbor = {allocation.goal.x + dx, allocation.goal.y + dy};
+            if(startNeighbor.x > 0 && startNeighbor.x < GRID_SIZE_X && startNeighbor.y > 0 && startNeighbor.y < GRID_SIZE_Y) {
+                double new_cost1 = getCost(allocation.start, startNeighbor, soil_amount, temporary_roads);
+                costMatrix[startIndex][startNeighbor.x * GRID_SIZE_Y + startNeighbor.y] = new_cost1;
+                costMatrix[startNeighbor.x * GRID_SIZE_Y + startNeighbor.y][startIndex] = new_cost1; // Assuming undirected graph, set both directions
+            }
+            if(goalNeighbor.x > 0 && goalNeighbor.x < GRID_SIZE_X && goalNeighbor.y > 0 && goalNeighbor.y < GRID_SIZE_Y) {
+                double new_cost2 = getCost(allocation.goal, goalNeighbor, soil_amount, temporary_roads);
+                costMatrix[goalIndex][goalNeighbor.x * GRID_SIZE_Y + goalNeighbor.y] = new_cost2;
+                costMatrix[goalNeighbor.x * GRID_SIZE_Y + goalNeighbor.y][goalIndex] = new_cost2; // Assuming undirected graph, set both directions
+            }
+        }
+    }
+}
+
+void updateCostMatrixAfterShovelMove(double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y], const TemporaryRoads& temporary_roads, const Allocation& allocation) {
+    int startIndex = allocation.start.x * GRID_SIZE_Y + allocation.start.y;
+    int goalIndex = allocation.goal.x * GRID_SIZE_Y + allocation.goal.y;
+    // もし仮設道路を建設しないセルであり，土量がゼロになったらアクセスできないようにする
+    // std::cout << "buildRoads: " << buildRoads(temporary_roads, allocation.start) << std::endl;
+    if(!buildRoads(temporary_roads, allocation.start) && soil_amount[allocation.start.x][allocation.start.y] == 0) {
+        // std::cout << "start to be inaccessible" << std::endl;
+            // 自分の周りのセルからアクセスできないようにする
+        for(int i =-1; i <= 1; ++i) {
+            if((allocation.start.x + i) < 0 || (allocation.start.x + i) >= GRID_SIZE_X) continue; // エリア外は除外
+            for(int j = -1; j <= 1; ++j) {
+                if((i == 0 && j == 0) ||  (allocation.start.y + j) < 0 || (allocation.start.y + j) >= GRID_SIZE_Y) continue; // 自分自身とエリア外は除外
+                int neighborIndex = (allocation.start.x + i) * GRID_SIZE_Y + (allocation.start.y + j);
+                    costMatrix[startIndex][neighborIndex] = INF; // アクセスできないようにする
+                    costMatrix[neighborIndex][startIndex] = INF; // アクセスできないようにする    
+            }
+        }
+    }
+    // std::cout << "buildRoads: " << buildRoads(temporary_roads, allocation.goal) << std::endl;
+    // std::cout << "soil_amount[goal]: " << soil_amount[allocation.goal.x][allocation.goal.y] << std::endl;
+    if(!buildRoads(temporary_roads, allocation.goal) && soil_amount[allocation.goal.x][allocation.goal.y] == 0) {
+        // std::cout << "goal to be inaccessible" << std::endl;
+        for(int i =-1; i <= 1; ++i) {
+            if((allocation.goal.x + i) < 0 || (allocation.goal.x + i) >= GRID_SIZE_X) continue; // エリア外は除外
+            for(int j = -1; j <= 1; ++j) {
+                if((i == 0 && j == 0) || (allocation.goal.y + j) < 0 || (allocation.goal.y + j) >= GRID_SIZE_Y) continue; 
+                int neighborIndex = (allocation.goal.x + i) * GRID_SIZE_Y + (allocation.goal.y + j);
+                    costMatrix[goalIndex][neighborIndex] = INF; // アクセスできないようにする
+                    costMatrix[neighborIndex][goalIndex] = INF; // アクセスできないようにする
+            }
+        }
+    }
+}
 
 std::tuple<double,Path,std::vector<int>> astar(const Allocation& allocation, const TemporaryRoads& temps, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],bool searchFlag = true) {   
     std::vector<int> used_temp_list(temps.roadNum, 0); // Initialize used_temp_list with zeros
-    double temp_eff = searchFlag ? TEMP_EFF : 0;   
+    double temp_eff = searchFlag ? TEMP_EFF : 0;  
+    std::cout <<"temp_eff: " << temp_eff << std::endl;
     Coord start = allocation.start;
     Coord goal = allocation.goal;
-    double volume = allocation.volume;
     Path path;
     double total_cost = 0;
 
@@ -679,7 +980,6 @@ std::tuple<double,Path,std::vector<int>> astar(const Allocation& allocation, con
             }
         }
     }
-
 
     // 経路再構築
     std::vector<Coord> reverse_path;
@@ -717,73 +1017,497 @@ std::tuple<double,Path,std::vector<int>> astar(const Allocation& allocation, con
             }
         }
     }
-
         current = next;
     }
     reverse_path.push_back(start);
 
     // 結果をPathに反映
     path.coord.assign(reverse_path.rbegin(), reverse_path.rend());
-    // total_cost = cost_so_far[goal.x][goal.y] * volume/ V_truck / TRUCK_NUM; //往復回数込みのコスト
-    total_cost = cost_so_far[goal.x][goal.y] * volume; //往復回数込みのコスト
+    total_cost = cost_so_far[goal.x][goal.y]; //往復回数込みのコスト
     return {total_cost, path, used_temp_list}; 
 }
 
 
+//get_cost関数をcost_matrixを使って計算するようにしたバージョン
+std::tuple<double,Path> astar(const Allocation& allocation, const double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y],const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {   
+    Coord start = allocation.start;
+    Coord goal = allocation.goal;
+    Path path;
+    double total_cost = 0;
 
-std::tuple<Result,double,double> processAllocations(std::vector<Allocation>& allocations,
+    std::priority_queue<Node, std::vector<Node>, std::greater<>> open_set;
+    open_set.push({0, start});
+
+    double cost_so_far[GRID_SIZE_X][GRID_SIZE_Y];
+    std::fill(&cost_so_far[0][0], &cost_so_far[0][0] + GRID_SIZE_X * GRID_SIZE_Y, INF);
+    cost_so_far[start.x][start.y] = 0;
+
+    Coord came_from[GRID_SIZE_X][GRID_SIZE_Y];
+    int directions[8][2] = {{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}};
+
+    while (!open_set.empty()) {
+        Node current_node = open_set.top();
+        open_set.pop();
+        Coord current = current_node.coord;
+        if (current.x == goal.x && current.y == goal.y) break;
+        for (const auto& dir : directions) {
+            Coord neighbor = {current.x + dir[0], current.y + dir[1]};
+            if (neighbor.x < 0 || neighbor.x >= GRID_SIZE_X || neighbor.y < 0 || neighbor.y >= GRID_SIZE_Y) continue;
+
+            double new_cost = cost_so_far[current.x][current.y] + costMatrix[current.x * GRID_SIZE_Y + current.y][neighbor.x * GRID_SIZE_Y + neighbor.y];
+
+            if (new_cost < cost_so_far[neighbor.x][neighbor.y]) {
+                cost_so_far[neighbor.x][neighbor.y] = new_cost;
+                int priority = new_cost + heuristic(goal, neighbor, soil_amount);
+                open_set.push({priority, neighbor});
+                came_from[neighbor.x][neighbor.y] = current;
+            }
+        }
+    }
+    if (cost_so_far[goal.x][goal.y] == INF) {
+        return {INF, Path{}};  // 無限コスト＋空のパスを返す
+    }
+
+    // 経路再構築
+    std::vector<Coord> reverse_path;
+    Coord current = goal;
+    while (!(current.x == start.x && current.y == start.y)) {
+        reverse_path.push_back(current);
+        Coord next = came_from[current.x][current.y];
+        current = next;
+    }
+    reverse_path.push_back(start);
+
+    // 結果をPathに反映
+    path.coord.assign(reverse_path.rbegin(), reverse_path.rend());
+    total_cost = cost_so_far[goal.x][goal.y]; //往復回数込みのコスト
+    return {total_cost, path}; 
+}
+
+//usedTempListを求める関数
+std::vector<int> usedTempList(const Path& path, const TemporaryRoads& temps) {
+    std::vector<int> used_temp_list(temps.roadNum, 0); // Initialize used_temp_list with zeros
+    for (size_t i = 0; i < path.size(); ++i) {
+        Coord current = path.coord[i];
+        if (i + 1 < path.size()) {
+            Coord next = path.coord[i + 1];
+            CoordPair search_pair = normalize_pair(current, next);
+            auto it = std::find_if(
+                temps.roadStatusList.begin(),
+                temps.roadStatusList.end(),
+                [&search_pair](const TemporaryRoadStatus& roadStatus) {
+                    return roadStatus.coordpair.coords[0].x == search_pair.coords[0].x &&
+                           roadStatus.coordpair.coords[0].y == search_pair.coords[0].y &&
+                           roadStatus.coordpair.coords[1].x == search_pair.coords[1].x &&
+                           roadStatus.coordpair.coords[1].y == search_pair.coords[1].y;
+                });
+            if (it != temps.roadStatusList.end()) {
+                size_t index = std::distance(temps.roadStatusList.begin(), it);
+                if (temps.roadStatusList[index].status[0] == 1 && temps.roadStatusList[index].status[1] == 1) {
+                    used_temp_list[index] = 2;
+                } else if (temps.roadStatusList[index].status[0] == 1 || temps.roadStatusList[index].status[1] == 1) {
+                    used_temp_list[index] = 1;
+                } else {
+                    used_temp_list[index] = 0;
+                }
+            }
+        }
+    }
+    
+    return used_temp_list;
+}
+
+void initializeRoadStatusVector(std::vector<RoadAroundCenter>& roadStatusVector ) {
+    // Initialize roadStatusMatrix with zeros
+    for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
+        RoadAroundCenter roadStatus;
+        roadStatus.center = {i / GRID_SIZE_Y, i % GRID_SIZE_Y}; // 中心座標
+        for (int j = 0; j < DIRECTIONS.size(); ++j) {
+            if(j == 4) continue; // Skip the center itself
+            NeighborInfo neighborinfo;
+            neighborinfo.neighbor = {roadStatus.center.x + DIRECTIONS[j].x, roadStatus.center.y + DIRECTIONS[j].y};
+            neighborinfo.type = RoadType::NONE;
+            roadStatus.neighbors.push_back(neighborinfo);
+        }
+        roadStatusVector.push_back(roadStatus);
+    }
+}
+
+void updateRoadStatusVectorAfterBuild(std::vector<RoadAroundCenter>& roadStatusVector, const std::vector<CoordPair>& coordPairs, std::vector<int>& builtRoadList) {
+    // Update the roadStatusMatrix after building roads
+    for(int roadIndex : builtRoadList) {
+        CoordPair coordpair = coordPairs[roadIndex];
+        Coord coord1 = coordpair.coords[0];
+        Coord coord2 = coordpair.coords[1];
+        int index1 = coord1.x * GRID_SIZE_Y + coord1.y;
+        int index1to2 = (coord2.x- coord1.x) * 3 + (coord2.y - coord1.y); // index1から見たindex2の相対インデックス
+        int index2 = coord2.x * GRID_SIZE_Y + coord2.y;
+        int index2to1 = (coord1.x - coord2.x) * 3 + (coord1.y - coord2.y);
+        if(roadStatusVector[index1].neighbors[index1to2].type == RoadType::NONE || roadStatusVector[index1].neighbors[index1to2].type == RoadType::UNPAVED) {
+            roadStatusVector[index1].neighbors[index2].type = RoadType::PAVED;
+            roadStatusVector[index2].neighbors[index1].type = RoadType::PAVED;
+        } 
+        if(roadStatusVector[index2].neighbors[index2to1].type == RoadType::NONE || roadStatusVector[index2].neighbors[index2to1].type == RoadType::UNPAVED) {
+            roadStatusVector[index2].neighbors[index1].type = RoadType::PAVED;
+            roadStatusVector[index1].neighbors[index2].type = RoadType::PAVED;
+        }
+    }
+}
+
+std::tuple<int, std::vector<std::pair<int, int>>> updateRoadStatusMatrixandSubRoadsAfterAstar(std::vector<RoadAroundCenter>& roadStatusVector, const Path& path, const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    // path上で道路がない場合，未舗装道路を建てる
+    std::vector<std::pair<int, int>> builtSubRoadsIndexList; // 未舗装道路を建設した箇所のインデックス情報を記録するリスト
+    int totalDistance = 0;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+        CoordPair coordpair = {path.coord[i], path.coord[i + 1]};
+        int distance = calculate_distance_3D(coordpair.coords[0], coordpair.coords[1],soil_amount)/2;
+        int index1 = coordpair.coords[0].x * GRID_SIZE_Y + coordpair.coords[0].y;
+        int index1to2 = (coordpair.coords[1].x - coordpair.coords[0].x) * 3+ (coordpair.coords[1].y - coordpair.coords[0].y); // index1から見たindex2の相対インデックス
+        int index2 = coordpair.coords[1].x * GRID_SIZE_Y + coordpair.coords[1].y;
+        int index2to1 = (coordpair.coords[0].x - coordpair.coords[1].x) * 3 + (coordpair.coords[0].y - coordpair.coords[1].y);
+        if (roadStatusVector[index1].neighbors[index1to2].type == RoadType::NONE) {
+            roadStatusVector[index1].neighbors[index1to2].type = RoadType::UNPAVED;
+            builtSubRoadsIndexList.push_back({index1, index2}); // 未舗装道路を建設した情報を記録
+            totalDistance += distance;
+        }
+        if (roadStatusVector[index2].neighbors[index2to1].type == RoadType::NONE) {
+            roadStatusVector[index2].neighbors[index2to1].type = RoadType::UNPAVED;
+            builtSubRoadsIndexList.push_back({index2, index1}); // 未舗装道路を建設した情報を記録
+            totalDistance += distance;
+        }
+    }
+    return {totalDistance, builtSubRoadsIndexList}; 
+}
+
+//入り口から作業地点までの最短経路探索する用のコスト行列を作成する関数．道路があるところはコスト０．それ以外は距離
+void RoadStatusVectorToCostMatrix(const std::vector<RoadAroundCenter>& roadStatusVector, double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y],const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    // Initialize costMatrix
+    for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
+        for (int j = 0; j < GRID_SIZE_X * GRID_SIZE_Y; ++j) {
+            costMatrix[i][j] = 0;
+        }
+    }
+
+    // Fill costMatrix based on roadStatusVector
+    for (const RoadAroundCenter& roadinfo : roadStatusVector) {
+        int centerIndex = roadinfo.center.x * GRID_SIZE_Y + roadinfo.center.y;
+        for (const NeighborInfo& neighborinfo : roadinfo.neighbors) {
+            if(neighborinfo.type != RoadType::NONE) continue; // 道路がない場合はスキップ
+            int neighborIndex = neighborinfo.neighbor.x * GRID_SIZE_Y + neighborinfo.neighbor.y;
+            costMatrix[centerIndex][neighborIndex] += calculate_distance_3D(roadinfo.center, neighborinfo.neighbor, soil_amount) / 2; // 距離をコストとして設定
+            costMatrix[neighborIndex][centerIndex] += calculate_distance_3D(roadinfo.center, neighborinfo.neighbor, soil_amount) / 2; // 双方向のコストを設定
+        }
+    }
+}
+
+std::vector<std::pair<int, int>> connectToEntrance(std::vector<RoadAroundCenter>& roadStatusVector, const Allocation allocation,const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],int stepNum,Solution& subsolution) {
+    std::vector<std::pair<int, int>> builtSubRoadIndexList; // 未舗装道路を建設した情報を記録するリスト
+    //2つの作業地点から入り口までの接続に必要な道路を，未舗装道路で接続する.追加した道路の情報はroadStatusVector,subsolutionに記録する
+    double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y];
+    RoadStatusVectorToCostMatrix(roadStatusVector, costMatrix, soil_amount);
+    Allocation entranceToWorkCoord; // 作業地点から入り口までの経路を求めるためのAllocation
+    entranceToWorkCoord.start = allocation.start; // 作業地点の座標
+    entranceToWorkCoord.goal = {entranceXPostion, entranceYPostion}; // 入り口の座標
+    entranceToWorkCoord.volume = 0; // 作業量は何でもいい
+    // 作業地点から入り口までの最短経路を求める
+    auto [cost, path] = astar(entranceToWorkCoord, costMatrix, soil_amount); // searchFlagをfalseにして仮設道路を考慮しない
+    //path上の座標に道路が建設済みじゃない場合，未舗装道路を建設する
+    for (int i = 0; i < path.size() - 1; ++i) {
+        Coord coord1 = path.coord[i];
+        Coord coord2 = path.coord[i + 1];
+        int index1 = coord1.x * GRID_SIZE_Y + coord1.y;
+        int index1to2 = (coord2.x - coord1.x) * 3 + (coord2.y - coord1.y); // index1から見たindex2の相対インデックス
+        int index2 = coord2.x * GRID_SIZE_Y + coord2.y;
+        int index2to1 = (coord1.x - coord2.x) * 3 + (coord1.y - coord2.y);
+
+        if (roadStatusVector[index1].neighbors[index1to2].type == RoadType::NONE || roadStatusVector[index2].neighbors[index2to1].type == RoadType::NONE) {
+            if(roadStatusVector[index1].neighbors[index1to2].type == RoadType::NONE) {
+                roadStatusVector[index1].neighbors[index1to2].type = RoadType::UNPAVED;
+                builtSubRoadIndexList.push_back({index1, index2}); // 未舗装道路を建設した情報を記録
+            }
+            if(roadStatusVector[index2].neighbors[index2to1].type == RoadType::NONE) {
+                roadStatusVector[index2].neighbors[index2to1].type = RoadType::UNPAVED;
+                builtSubRoadIndexList.push_back({index2, index1}); // 未舗装道路を建設した情報を記録
+            }
+            TemporaryRoadbuildStatus newRoadStatus;
+            newRoadStatus.coordpair.coords[0] = coord1;
+            newRoadStatus.coordpair.coords[1] = coord2;
+            newRoadStatus.timings[stepNum] = 1; // 未舗装道路を建設する
+            subsolution.roadbuildStatusList.push_back(newRoadStatus); // 新しい道路の情報を追加
+            subsolution.roadNum += 1; // 道路の数を増やす
+        }
+    }
+    return builtSubRoadIndexList; // 未舗装道路を建設した情報を返す
+}
+
+void addMatrix(double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], 
+               double moveCostMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y],
+               double buildCostMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y],
+               double trip_num) {
+    // Add the moveCostMatrix and buildCostMatrix to the costMatrix
+    double beta = CONSTRUCTION_SUB_TEMP * VELOCITY_ROUGH / (COST_HOUR * TRUCK_NUM); // 未舗装道路の建設コストを考慮した係数
+    for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
+        for (int j = 0; j < GRID_SIZE_X * GRID_SIZE_Y; ++j) {
+            costMatrix[i][j] = moveCostMatrix[i][j] + buildCostMatrix[i][j] * beta;
+        }
+    }
+}
+
+//土砂配分を行った際に新たに建てた未舗装道路の部分のBuildMatrixを更新する関数
+void updateBuildMatrixBeforeAstar(
+    double buildMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y],std::vector<RoadAroundCenter>& roadStatusVector,
+    const std::vector<std::pair<int, int>>& updatebuildIndexList
+) {
+    // Update the buildMatrix after building unpaved roads
+    for(const auto& indexpair : updatebuildIndexList) {
+        int index1to2_x = (indexpair.second - indexpair.first) / GRID_SIZE_Y; // index1からindex2への相対インデックスのx座標
+        int index1to2_y = (indexpair.second - indexpair.first) % GRID_SIZE_Y; // index1からindex2への相対インデックスのy座標
+        int index1to2 = (1+index1to2_x) * 3 + (1+index1to2_y); // index1から見たindex2の相対インデックス
+        int index2to1 = (1-index1to2_x) * 3 + (1-index1to2_y); // index2から見たindex1の相対インデックス
+        if(index1to2 < 0 || index1to2 >= 9) continue;
+        if(roadStatusVector[indexpair.first].neighbors[index1to2].type != RoadType::NONE)  {
+        buildMatrix[indexpair.first][indexpair.second] = 0; // 未舗装道路が建設されたところのコストを0にする
+        }
+        if(roadStatusVector[indexpair.second].neighbors[index2to1].type != RoadType::NONE)  {
+        buildMatrix[indexpair.second][indexpair.first] = 0; // 未舗装道路が建設されたところのコストを0にする
+        }
+    }
+}
+
+RoadType getRoadType(const std::vector<RoadAroundCenter>& roadStatusVector, int index1, int index2) {
+    // Get the road type between two indices
+    int index1to2_x = (index2 - index1) / GRID_SIZE_Y; // index1からindex2への相対インデックスのx座標
+    int index1to2_y = (index2 - index1) % GRID_SIZE_Y; // index1からindex2への相対インデックスのy座標
+    int index1to2 = (1+index1to2_x) * 3 + (1+index1to2_y); // index1から見たindex2の相対インデックス
+    if(index1to2 < 0 || index1to2 >= 9) return RoadType::PROHIBITED; // エリア外は除外
+    return roadStatusVector[index1].neighbors[index1to2].type;
+}
+
+void updateMoveMatrixBeforeAstar(
+    double moveMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y], 
+    std::vector<RoadAroundCenter>& roadStatusVector,
+    const std::vector<std::pair<int, int>>& updateMoveIndexList,
+    const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]
+) {
+    // Update the cost matrix after building roads
+    //update the moveMatrix with the new costs for the built roads
+    for(const auto& indexpair : updateMoveIndexList) {
+        Coord roadCoord1 = roadStatusVector[indexpair.first].center; // index1の座標
+        Coord roadCoord2 = roadStatusVector[indexpair.second].center; // index2の座標
+        if(roadCoord1.x < 0 || roadCoord1.x >= GRID_SIZE_X || roadCoord1.y < 0 || roadCoord1.y >= GRID_SIZE_Y ||
+           roadCoord2.x < 0 || roadCoord2.x >= GRID_SIZE_X || roadCoord2.y < 0 || roadCoord2.y >= GRID_SIZE_Y) {
+            continue; // エリア外は除外
+        }
+        int index1to2_x = (indexpair.second - indexpair.first) / GRID_SIZE_Y; // index1からindex2への相対インデックスのx座標
+        int index1to2_y = (indexpair.second - indexpair.first) % GRID_SIZE_Y; // index1からindex2への相対インデックスのy座標
+        int index1to2 = (1+index1to2_x) * 3 + (1+index1to2_y); // index1から見たindex2の相対インデックス
+        int index2to1 = (1-index1to2_x) * 3 + (1-index1to2_y); // index2から見たindex1の相対インデックス
+        if(index1to2 < 0 || index1to2 >= 9) continue;
+        // Update the cost for the road coordinates
+        double distance = calculate_distance_3D(roadCoord1, roadCoord2, soil_amount) / 2; // 距離をコストとして設定
+        double total_cost = 0;
+        double firstToSecond_cost = distance; // 現在のコストを距離に設定
+        double secondToFirst_cost = distance; // 隣接セルのコストを距離に設定
+        if(roadStatusVector[indexpair.first].neighbors[index1to2].type == RoadType::PROHIBITED|| roadStatusVector[indexpair.second].neighbors[index2to1].type == RoadType::PROHIBITED) {
+            firstToSecond_cost = INF; // 仮設道路が禁止されている場合はコストを無限大にする
+            secondToFirst_cost = INF; // 仮設道路が禁止されている場合はコストを無限大にする
+        }
+
+        if(roadStatusVector[indexpair.first].neighbors[index1to2].type == RoadType::PAVED)  {
+            firstToSecond_cost *= TEMP_EFF; // 仮設道路の効率を考慮
+            }  
+        if(roadStatusVector[indexpair.second].neighbors[index2to1].type == RoadType::PAVED) {
+            secondToFirst_cost *= TEMP_EFF; // 仮設道路の効率を考慮
+        }
+        moveMatrix[indexpair.first][indexpair.second] = firstToSecond_cost + secondToFirst_cost; // index1からindex2へのコストを更新
+        moveMatrix[indexpair.second][indexpair.first] = firstToSecond_cost + secondToFirst_cost; // index2からindex1へのコストを更新
+    }
+}
+
+void addUpdateIndexList(
+    std::vector<std::pair<int, int>>& updateBuiltIndexList,
+    std::vector<std::pair<int, int>>& updateMoveIndexList,
+    const Allocation& allocation
+) {
+    for (const auto& direction : DIRECTIONS) {
+        if(direction.x == 0 && direction.y == 0) continue; // 自分自身の方向は除外
+        //作業地点から隣接セル方向へのbuiltコストを更新候補に入れる（隣接セルから作業地点方向へのコストは更新しない）
+        updateBuiltIndexList.push_back({allocation.start.x * GRID_SIZE_Y + allocation.start.y, (allocation.start.x + direction.x) * GRID_SIZE_Y + (allocation.start.y + direction.y)});
+        updateBuiltIndexList.push_back({allocation.goal.x * GRID_SIZE_Y + allocation.goal.y, (allocation.goal.x + direction.x) * GRID_SIZE_Y + (allocation.goal.y + direction.y)});
+        //作業地点から隣接セル方向へのmoveコストを更新候補に入れる
+        updateMoveIndexList.push_back({allocation.start.x * GRID_SIZE_Y + allocation.start.y, (allocation.start.x + direction.x) * GRID_SIZE_Y + (allocation.start.y + direction.y)});
+        updateMoveIndexList.push_back({allocation.goal.x * GRID_SIZE_Y + allocation.goal.y, (allocation.goal.x + direction.x) * GRID_SIZE_Y + (allocation.goal.y + direction.y)});
+    }
+}
+
+void updateRoadStatusAfterShovelMove(std::vector<RoadAroundCenter>& roadStatusVector, Allocation allocation,double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    // 作業が終わった地点は立ち入り禁止
+    int startIndex = allocation.start.x * GRID_SIZE_Y + allocation.start.y;
+    int goalIndex = allocation.goal.x * GRID_SIZE_Y + allocation.goal.y;
+    for(int i = -1; i <= 1; ++i) {
+        if((allocation.start.x + i) < 0 || (allocation.start.x + i) >= GRID_SIZE_X) continue; // エリア外は除外
+        for(int j = -1; j <= 1; ++j) {
+            if((i == 0 && j == 0) || (allocation.start.y + j) < 0 || (allocation.start.y + j) >= GRID_SIZE_Y||soil_amount[allocation.start.x + i][allocation.start.y + j] != 0) continue; 
+            int neighborIndex = (allocation.start.x + i) * GRID_SIZE_Y + (allocation.start.y + j);
+            roadStatusVector[startIndex].neighbors[(i + 1) * 3 + (j + 1)].type = RoadType::PROHIBITED; // 作業地点の周囲のセルを立ち入り禁止にする
+            roadStatusVector[neighborIndex].neighbors[(-i + 1) * 3 + (-j + 1)].type = RoadType::PROHIBITED; // 隣接セルの立ち入り禁止も更新
+        }
+    }
+}
+
+std::tuple<Result,double,double,double> processAllocations(std::vector<Allocation>& allocations,
                         const Solution& solution,
                         double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]
-                        ) {
+                        ){
     // Initialize TemporaryRoads
-    TemporaryRoads temps;
-    temps.initialize(solution);
+    // double roadStatusMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y] = {0}; // [i][j]はセルiの中心からiとjの中間点への道路の状態を表す. 2:仮設道路 1:未舗装道路 0:なし
+    std::vector<RoadAroundCenter> roadStatusVector;
+    initializeRoadStatusVector(roadStatusVector);
+    TemporaryRoads pavedRoads; //仮設道路の建設状況
+    Solution subSolution; //未舗装道路の建設位置，施工順序を記録する
+    //print solution
+    // std::cout << "Solution: " << std::endl;
+
+    std::vector<CoordPair> roadList;
+    for (const TemporaryRoadbuildStatus& roadstatus : solution.roadbuildStatusList) {
+        CoordPair roadpair = roadstatus.coordpair;
+        roadList.push_back(roadpair);
+    }
+
+    pavedRoads.initialize(solution);
     double operate_cost = 0;
     double built_length = 0;
+    double shovel_move_cost = 0;
     auto result = initiallizedResult(solution);
     int stepNum = solution.stepNum;
+    //allocation作業時にトラックが移動する際のコストを計算するための行列
+    //道路がない場所を通る際には移動コストに加え，未舗装道路の建設コスト(/trip_num)も加算する
+    double costMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y];
+    double moveCostMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y]; //移動コストの行列
+    double buildCostMatrix[GRID_SIZE_X*GRID_SIZE_Y][GRID_SIZE_X*GRID_SIZE_Y]; //未舗装道路の建設コストの行列
+    // std::cout << "pavedRoads initialized" << std::endl;
+    // pavedRoads.printParameters();
+    setCostMatrix(costMatrix, soil_amount);
+    //移動コストの行列は初期状態ではコスト行列と同じ
+    for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
+        for (int j = 0; j < GRID_SIZE_X * GRID_SIZE_Y; ++j) {
+            moveCostMatrix[i][j] = costMatrix[i][j];
+            buildCostMatrix[i][j] = costMatrix[i][j];
+        }
+    }
 
+
+    // 流れ
+    // 1. solutionに基づき，各ステップで仮設道路を建設
+    // 2. ダンプトラックの移動
+    //      -A*アルゴリズムでダンプトラックの最短経路を求める
+    //      -経路上に道路がない場合，未舗装道路を建てる
+    //      -作業地点と入口がつながっていない場合，未舗装道路で結ぶ
+    // 3. 地形変化
+    //      -作業地点上の仮設道路を撤去する
+    //      -土量を更新する
+    // 4. ショベルの移動
+    //      -ショベルの移動経路を求める
+    //      -経路上に道路がない場合，未舗装道路を建てる
+    //      -作業が終了した地点に今後立ち入らないようにする
+    // 5. 次のステップへ
+    std::vector<std::pair<int, int>> updateBuiltIndexList; // BuiltCostMatrixで更新するインデックスを記録する
+    std::vector<std::pair<int, int>> updateMoveIndexList; // MoveCostMatrixで更新するインデックスを記録する
     for (int i = 0; i < stepNum; ++i) {
         // std::cout << "step: " << i << std::endl;
-        double built_length_i = 0;
-        buildNewRoad(temps, i, solution, result.built_length_list, soil_amount, built_length_i);
-        // std::cout<<"after build"<<std::endl;
-        built_length += built_length_i;
-        // temps.printParameters();
-        auto [cost,path,usedTempList_i] = astar(allocations[i], temps,soil_amount,true);
-        // std::cout<<"after astar"<<std::endl;
 
+        // 1. solutionに基づき，各ステップで仮設道路を建設
+        double built_length_i = 0;
+        auto buildPavedRoadList = buildNewRoad(pavedRoads, i, solution, result.built_length_list, soil_amount, built_length_i);
+        // updateCostMatrixAfterBuild(moveCostMatrix, buildCostMatrix, pavedRoads, soil_amount, buildPavedRoadList);
+        updateRoadStatusVectorAfterBuild(roadStatusVector, roadList, buildPavedRoadList);
+
+        //print roadStatusVector
+        for(int j = 0; j < roadStatusVector.size(); ++j) {
+            roadStatusVector[j].print();
+        }
+
+
+        std::vector<std::pair<int, int>> tempUpdateBuiltIndexList; // 一時的に更新するインデックスを記録する
+        std::vector<std::pair<int, int>> tempUpdateMoveIndexList; // 一時的に更新するインデックスを記録する
+        // 2. ダンプトラックの移動
+        updateBuildMatrixBeforeAstar(buildCostMatrix, roadStatusVector,updateBuiltIndexList); // 未舗装道路の部分のBuildMatrixを更新する
+        updateMoveMatrixBeforeAstar(moveCostMatrix, roadStatusVector, updateMoveIndexList,soil_amount); // 未舗装道路の部分のMoveMatrixを更新する
+        double trip_num = 2*std::ceil(allocations[i].volume / V_TRUCK / TRUCK_NUM)-1; // 往復回数込みの運搬回数
+        addMatrix(costMatrix, moveCostMatrix,buildCostMatrix, trip_num);
+        built_length += built_length_i;
+        auto [cost,path] = astar(allocations[i], costMatrix, soil_amount);
+        //cost: 移動コスト+ 経路上の未舗装道路の建設コスト
+        if(cost == INF) {
+            return {result, INF, built_length, shovel_move_cost}; // 無限コストの場合は処理を終了
+        }
+        auto usedTempList_i = usedTempList(path, pavedRoads);
         result.used_road_flow[i] = usedTempList_i;
         // result.printUsedRoadFlow();
         result.path[i] = path;
-        operate_cost += cost;
-        // Remove temporary roads
-        removeTemporaryRoads(allocations[i], temps);
-        // std::cout<<"after remove"<<std::endl;
+        auto [unpavedBuiltLength, builtSubRoadsIndexList] = updateRoadStatusMatrixandSubRoadsAfterAstar(roadStatusVector, path, soil_amount );
+        tempUpdateBuiltIndexList.insert(tempUpdateBuiltIndexList.end(), builtSubRoadsIndexList.begin(), builtSubRoadsIndexList.end());
+        std::cout << "unpavedBuiltLength: " << unpavedBuiltLength << std::endl;
+        auto builtSubRoadsIndexList2 = connectToEntrance(roadStatusVector, allocations[i], soil_amount, solution.stepNum, subSolution); // 作業地点と入口を仮設道路，未舗装道路で結ぶ．roadStatusVector,subSolutionに記録される
+        tempUpdateBuiltIndexList.insert(tempUpdateBuiltIndexList.end(), builtSubRoadsIndexList2.begin(), builtSubRoadsIndexList2.end());
+        operate_cost += cost * trip_num; // 往復回数込みの運搬コスト
 
+        //  3. 地形変化
+        // Remove temporary roads
+        removeTemporaryRoads(allocations[i], roadStatusVector);
         // Change soil
         changeSoil(allocations[i], soil_amount);
+        //作業地点をMoveコスト更新の候補に入れる
+        addUpdateIndexList(tempUpdateBuiltIndexList, tempUpdateMoveIndexList, allocations[i]);
+
+        // updateCostMatrixAfterTerrainChange(costMatrix, soil_amount, pavedRoads, allocations[i]);
+
+        // std::cout << "costMatrix updated" << std::endl;
+        // for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
+        //     std::cout << "Row " << i << ": ";
+        //     for (int j = 0; j < GRID_SIZE_X * GRID_SIZE_Y; ++j) {
+        //         std::cout << costMatrix[i][j] << " ";
+        //     }
+        //     std::cout << std::endl;
+        // }
+
+        // 4. ショベルの移動
+        //calculate shovel move cost
+        if(i == stepNum - 1) continue; // 最後のステップではショベル移動は行わない
+        Allocation shovel_move_allocation;
+        shovel_move_allocation.start = allocations[i].goal;
+        shovel_move_allocation.goal = allocations[i+1].start;
+        shovel_move_allocation.volume = 0;
+        auto [shovel_move_cost_i, shovel_move_path] = astar(shovel_move_allocation, costMatrix, soil_amount);
+        // std::cout << "shovel_move_cost_i: " << shovel_move_cost_i << std::endl;
+        // std::cout << "shovel_move_path: ";
+        // shovel_move_path.print();
+        shovel_move_cost += shovel_move_cost_i;
+   
+
+        // updateCostMatrixAfterShovelMove(costMatrix, soil_amount, pavedRoads, allocations[i]);
+        updateRoadStatusAfterShovelMove(roadStatusVector, allocations[i], soil_amount); // 作業が終わった地点は立ち入り禁止にする
+
+        updateBuiltIndexList = tempUpdateBuiltIndexList; // 一時的な更新リストを更新
+        updateMoveIndexList = tempUpdateMoveIndexList; // 一時的な更新リストを更新
     }
-    return {result, operate_cost, built_length};
+    // std::cout << "Total shovel move cost: " << shovel_move_cost << std::endl;
+    // std::cout << std::endl;
+    // std::cout << std::endl;
+
+    return {result, operate_cost, built_length, shovel_move_cost};
 }
 
-double costCalculation( double operate_cost,double built_length) {
+double costCalculation( double operate_cost,double built_length,double shovel_move_cost) {
     // 運搬距離コスト
     double time_average = operate_cost * GRID_SIZE / (VELOCITY_ROUGH * 1000.0); // 所要時間 (h)
     double cost_construction = COST_HOUR * time_average / WORK_EFF;
     // 仮設道路の建設コスト
     double cost_road = built_length * CONSTRUCTION_TEMP * GRID_SIZE;
-    return cost_construction + cost_road;
+    double shovel_time_average = shovel_move_cost * GRID_SIZE / (VELOCITY_SHOVEL * 1000.0); // 所要時間 (h)
+    double cost_shovel_move = COST_HOUR * shovel_time_average / WORK_EFF;
+    return cost_construction + cost_road + cost_shovel_move;
 }
-
-std::vector<std::vector<int>> initiallizedConnectLabelSet(){
-    std::vector<std::vector<int>> connectLabelSet(GRID_SIZE_X * GRID_SIZE_Y);    
-    for (int i = 0; i < GRID_SIZE_X * GRID_SIZE_Y; ++i) {
-        connectLabelSet[i] = {i};
-    }
-    return connectLabelSet;
-}
-
 
 // evaluate_design 関数
 std::tuple<Result,double> evaluate_design(
@@ -791,8 +1515,25 @@ std::tuple<Result,double> evaluate_design(
     double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],
     const Solution& solution
 ) {
-    auto [result, cost_operate, built_length] = processAllocations(allocations, solution, soil_amount);
-    double total_cost = costCalculation(cost_operate,built_length);
+    auto [result, cost_operate, built_length, shovel_move_cost] = processAllocations(allocations, solution, soil_amount);
+    double total_cost = costCalculation(cost_operate,built_length,shovel_move_cost);
+    return {result, total_cost};
+}
+
+std::tuple<Result,double> evaluate_design(
+    AllocationOrder allocationOrder,
+    double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],
+    const Solution& solution
+) {
+    std::vector<Allocation> allocations;
+    for (const auto& allocation : allocationOrder.formerAllocations) {
+       allocations.push_back(allocation);
+    }
+    for (const auto& allocation : allocationOrder.latterAllocations) {
+       allocations.push_back(allocation);
+    }
+    auto [result, cost_operate, built_length, shovel_move_cost] = processAllocations(allocations, solution, soil_amount);
+    double total_cost = costCalculation(cost_operate,built_length,shovel_move_cost);
     return {result, total_cost};
 }
 
@@ -1026,8 +1767,10 @@ Solution adjustPostionForEntryConnectivity(
                 allocation.goal.x = minNodeIndex / GRID_SIZE_Y;
                 allocation.goal.y = minNodeIndex % GRID_SIZE_Y;
                 allocation.volume = 1.0;
-                //要修正（heuristic関数temp_effを0にする必要あり？）
+
+                //要修正dikjstraを使う
                 auto [cost, path,_] = astar(allocation, temps, soil_amount, false);
+                
                 // path.print();
                 //path上のnodeをconnectNetworkList[i]のnodeListに追加し，接続しているedgeをconnectNetworkList[i]のedgeListに追加する
                 for(size_t j = 0; j < path.coord.size(); ++j) {
@@ -1087,18 +1830,8 @@ Solution generateSolutionTiming(
     ) {
         Solution neighbor_solution = current_solution;
         setAllTimingtoOne(neighbor_solution);
-
-        // std::cout <<"neighbor_solution";
-        // neighbor_solution.printParameters();
-
-        auto [local_result,local_operate_cost,local_builtlength] = processAllocations(allocations, neighbor_solution, soil_amount);
-
-        // Print local_result.used_road_flow
-        // local_result.printPath();
-        // std::cout << "used_road_flow" << std::endl;
-        // local_result.printUsedRoadFlow();
-
-        // stepNum 3: Adjust timings based on used_temp_list
+        auto [local_result,local_operate_cost,local_builtlength,local_shovel_move_cost] = processAllocations(allocations, neighbor_solution, soil_amount);
+        // Adjust timings based on used_temp_list
         for (size_t i = 0; i < neighbor_solution.stepNum; ++i) {
             for (size_t j = 0; j < neighbor_solution.roadNum; ++j) {
                 if (local_result.used_road_flow[i][j] == 0) {
@@ -1121,11 +1854,19 @@ using Graph = std::vector<std::vector<Edge>>; //temp上の座標のみノード�
 
 void printGraph(const Graph& graph){
     std::cout << "Graph" << std::endl;
+    // for(size_t i = 0;i<graph.size();i++){
+    //     std::cout << "graph[" << i << "]:";
+    //     std::cout <<"to:" << graph[i][0].to << " cost:" << graph[i][0].cost ;
+    //     for(size_t j = 1;j<graph.size(); j++){
+    //         std::cout <<", to:" << graph[i][j].to << " cost:" << graph[i][j].cost ;
+    //     }
+    //     std::cout << std::endl;
+    // }
     for(size_t i = 0;i<graph.size();i++){
         std::cout << "graph[" << i << "]:";
-        std::cout <<"to:" << graph[i][0].to << " cost:" << graph[i][0].cost ;
+        std::cout << graph[i][0].cost ;
         for(size_t j = 1;j<graph.size(); j++){
-            std::cout <<", to:" << graph[i][j].to << " cost:" << graph[i][j].cost ;
+            std::cout <<", "  << graph[i][j].cost ;
         }
         std::cout << std::endl;
     }
@@ -1874,53 +2615,519 @@ std::tuple<Solution,Solution,double> generate_neighbor(
     return {neighbor_solution1,neighbor_solution4,total_cost};
 }
 
-// std::tuple<Solution,double,std::vector<Path>> local_search(
-//     const Solution& current_solution,
-//     std::vector<Allocation> allocations,
-//     double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]
-//     ) 
-// {   
-//     Solution neighbor_solution = current_solution;
 
-//     const std::vector<std::pair<int, int>>& DIRECTIONS = {{-1,-1},{-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}};
-    
-//     // stepNum 2: Set all timings to 1 and evaluate the solution
-//     for (auto& timing : neighbor_solution.timings) {
-//         std::fill(timing.begin(), timing.end(), 1);
-//     }
-//     auto [local_result,local_operate_cost,local_builtlength] = process_allocations(allocations, neighbor_solution, soil_amount);
-//     // Print local_result.used_road_flow
-//     std::cout << std::endl;
+bool isRoadAllocated(const Coord& coord, const Solution& solution) {
+    for (const auto& road : solution.roadbuildStatusList) {
+        if (road.coordpair.coords[0].x == coord.x && road.coordpair.coords[0].y == coord.y ||
+            road.coordpair.coords[1].x == coord.x && road.coordpair.coords[1].y == coord.y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void customExplore(const Graph& graph, int entranceNode, std::vector<int>& sortedNodes) {
+    int numNodes = graph.size();
+    std::vector<bool> visited(numNodes, false); // ノードの訪問管理
+    std::stack<int> mainStack;                 // メインルートを探索するスタック
+    std::queue<int> branchQueue;               // 分岐ルートを保存するキュー
+
+    // 開始ノードをプッシュ
+    mainStack.push(entranceNode);
+    int loopCount = 0; 
+    while (!mainStack.empty() || !branchQueue.empty()) {
+        std::cout << "Loop count: " << loopCount++ << std::endl; // デバッグ用
+        int currentNode;
+        if(currentNode){        
+            std::cout << "currentNode: " <<currentNode << std::endl;
+        } else {
+            std::cout << "currentNode is empty" << std::endl;
+        }
+        //print mainstack
+        std::cout << "Main stack: ";
+        std::stack<int> tempStack = mainStack;
+        while (!tempStack.empty()) {
+            std::cout << tempStack.top() << " ";
+            tempStack.pop();
+        }
+        std::cout << std::endl;
+        //print branchQueue
+        std::cout << "Branch queue: ";
+        std::queue<int> tempQueue = branchQueue;
+        while (!tempQueue.empty()) {
+            std::cout << tempQueue.front() << " ";
+            tempQueue.pop();
+        }
+        std::cout << std::endl;
+        //print visited
+        std::cout << "Visited nodes: ";
+        for (int i = 0; i < numNodes; ++i) {
+            if (visited[i]) {
+                std::cout << i << " ";
+            }
+        }
+        std::cout << std::endl;
+
+        if (!mainStack.empty()) {
+            currentNode = mainStack.top();
+            mainStack.pop();
+        } else {
+            currentNode = branchQueue.front();
+            branchQueue.pop();
+        }
+
+        // 既に訪問済みのノードはスキップ
+        if (visited[currentNode]) continue;
+
+        // ノードを訪問済みにしてソート結果に追加
+        visited[currentNode] = true;
+        sortedNodes.push_back(currentNode);
+
+        // 隣接ノードを取得して接続順にソート
+        std::vector<Edge> neighbors;
+        for (const auto& edge : graph[currentNode]) {
+            if (edge.cost != std::numeric_limits<double>::infinity()) {
+                neighbors.push_back(edge);
+            }
+        }
+        
+        std::sort(neighbors.begin(), neighbors.end(), [](const Edge& a, const Edge& b) {
+            return a.cost < b.cost; // コスト順でソート
+        });
+
+
+        // 最初のルートをメインに追加、それ以外を分岐キューに追加
+        bool firstRoute = true;
+        for (const auto& neighbor : neighbors) {
+            if (!visited[neighbor.to]) {
+                if (firstRoute) {
+                    mainStack.push(neighbor.to);
+                    firstRoute = false;
+                } else {
+                    branchQueue.push(neighbor.to);
+                }
+            }
+        }
+    }
+}
+
+//allocationのリストに対しいてヒューリスティックにallocationの順番を決める関数
+AllocationOrder generateAllocationOrderwithHeuristicRule(const std::vector<Allocation>& allocations,const Solution& solution,const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    AllocationOrder allocationOrder;
+    //仮設道路が配置されているセルへの土砂配分はformerに入れる
+    std::vector<Allocation> formerAllocations;
+    std::vector<Allocation> latterAllocations;
+    for(const auto& allocation : allocations) {
+        //仮設道路が配置されているセルへの土砂配分はformerに入れる
+        if (isRoadAllocated(allocation.start, solution) || isRoadAllocated(allocation.goal, solution)) {
+            formerAllocations.push_back(allocation);
+        } else {
+            latterAllocations.push_back(allocation);
+        }
+    }
+
+    //laterAllocations：入り口セルから遠い順にソート
+    std::sort(latterAllocations.begin(), latterAllocations.end(), [&](const Allocation& a, const Allocation& b) {
+        int distanceStartA = calculate_distance_2D(a.start, {entranceXPostion, entranceYPostion}, soil_amount);
+        int distanceStartB = calculate_distance_2D(b.start, {entranceXPostion, entranceYPostion}, soil_amount);
+        int distanceGoalA = calculate_distance_2D(a.goal, {entranceXPostion, entranceYPostion}, soil_amount);
+        int distanceGoalB = calculate_distance_2D(b.goal, {entranceXPostion, entranceYPostion}, soil_amount);
+        
+        int minDistanceA = std::min(distanceStartA, distanceGoalA);
+        int minDistanceB = std::min(distanceStartB, distanceGoalB);
+        int maxDistanceA = std::max(distanceStartA, distanceGoalA);
+        int maxDistanceB = std::max(distanceStartB, distanceGoalB);
+
+       // 大きい方を比較
+    if (maxDistanceA != maxDistanceB) {
+        return maxDistanceA > maxDistanceB;
+    }
+    // 小さい方が同じ場合は、大きい方を比較
+    return minDistanceA > minDistanceB;
+    });
+
+    if(solution.roadNum != 0) {
+    //formerAllocations：入り口セルからの仮設道路の接続ネットワークを確認し，入り口から近いセルに土砂配分を行っている順にソート
+    //solutionのtemporaryRoadbuildStatusListから入り口セルとの接続を確認
+    TemporaryRoads temps;
+    temps.initialize(solution);
+    temps.setStatusToOne();
+    // connectNetworkList network;
+    // network.initialize(temps);
+    // network.printConverted();
+    // mergeConnectNetwork(network);
+        // network.printConverted();
+
+    //仮設道路が入り口と接続している前提で，入り口セルから順に各仮設道路がおかれるセルが入り口から近い順（接続順）にソートする
+    //例）入り口セルが(0,0),仮設道路が　{(0,0),(1,0)},{(0,0),(0,1)},{(1,0),(2,0)},{(0,1),(0,2)},{(2,0),(3,0)}　に配置されている場合、
+    //{(0,0),(1,0)},{(0,0),(0,1)},{(0,1),(0,2)},{(1,0),(2,0)},{(2,0),(3,0)}の順にソートされる(分岐する場合は)
+    Graph graph; 
+    double soil_amount_fake[GRID_SIZE_X][GRID_SIZE_Y] = {0}; 
+    auto [coordToNodeList,roadToEdgeList] = setGraph(graph,temps,soil_amount_fake); 
+    printGraph(graph);
+
+    // //print coordToNodeList
+    // std::cout << "coordToNodeList:" << std::endl;
+    // for (const auto& entry : coordToNodeList) {
+    //     std::cout << "Coord: (" << entry.coord.x << ", " << entry.coord.y << "), Node: " << entry.node << std::endl;
+    // }
+    // entranceのcoordのnodeを求める
+    int entranceNode = -1;
+    Coord entranceCoord = {entranceXPostion, entranceYPostion};
+    for (const auto& entry : coordToNodeList) {
+        if (entry.coord.x == entranceCoord.x && entry.coord.y == entranceCoord.y) {
+            entranceNode = entry.node;
+            break;
+        }
+    }
+    if(entranceNode == -1) {
+        std::cerr << "Error: entranceCoord not found in coordToNodeList." << std::endl;
+        exit(1); // エラー終了
+    }
+
+    //入り口ノードからgraphを基にソートしていく
+    std::vector<int> sortedNodes;
+    customExplore(graph, entranceNode, sortedNodes);
+    //print sortedNodes
+    // std::cout << "sortedNodes: ";
+    // for (const auto& node : sortedNodes) {
+    //     std::cout << node << " ";
+    // }
+    // std::cout << std::endl;
    
-//     // stepNum 3: Adjust timings based on used_temp_list
-//     for (size_t i = 0; i < neighbor_solution.stepNum; ++i) {
-//         for (size_t j = 0; j < neighbor_solution.roadNum; ++j) {
-//             if (local_result.used_road_flow[i][j] == 0) {
-//                 neighbor_solution.timings[j][i] = 0;
-//             }
-//             else {
-//                 neighbor_solution.timings[j][i] = 1;
-//             }
-//         }
-//     }
-//     auto [new_result,total_cost] = evaluate_design(allocations,soil_amount,neighbor_solution);
-//     return {neighbor_solution,total_cost,new_result.path};
-// }
+    auto tempFormerAllocations = formerAllocations;
+    std::vector<Allocation> tempFormerAllocations2; // 一時的にformerAllocationsを保存するための変数
+    //coordToNodelistを基に、sortedNodesの順番でformerAllocationsをソートする
+    for(const auto& node : sortedNodes) {
+        //nodeに対応するCoordを求める
+        Coord coord = coordToNodeList[node].coord;
+        //coordに対応するAllocationを求める.複数ある場合は，もう一つの点が入り口から近いもの順にsortする
+        std::vector<std::pair<Allocation, int>> matchingAllocations; //startがマッチした場合hは0, goalがマッチした場合は1を格納する
+        auto it = tempFormerAllocations.begin();
+        while (it != tempFormerAllocations.end()) {
+            if (it->start.x == coord.x && it->start.y == coord.y) {
+                matchingAllocations.emplace_back(*it, 0);
+                it = tempFormerAllocations.erase(it);  // erase は次のイテレータを返す
+            } else if (it->goal.x == coord.x && it->goal.y == coord.y) {
+                matchingAllocations.emplace_back(*it, 1);
+                it = tempFormerAllocations.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        std::cout << std::endl;
+        if(matchingAllocations.size() >1){
+            //matchingAllocationsの中から、もう一つの点が入り口から近いもの順にソートする
+            std::sort(matchingAllocations.begin(), matchingAllocations.end(), [&](const std::pair<Allocation, int>& a, const std::pair<Allocation, int>& b) {
+                int distanceA = (a.second == 1) ? calculate_distance_2D(a.first.start, {entranceXPostion, entranceYPostion}, soil_amount) : calculate_distance_2D(a.first.goal, {entranceXPostion, entranceYPostion}, soil_amount);
+                int distanceB = (b.second == 1) ? calculate_distance_2D(b.first.start, {entranceXPostion, entranceYPostion}, soil_amount) : calculate_distance_2D(b.first.goal, {entranceXPostion, entranceYPostion}, soil_amount);
+                return distanceA < distanceB;
+            });
+        }
+       
 
-void simulated_annealing(std::vector<Allocation>& allocations, const Solution& initSolution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
-    Solution current_solution = initSolution;
-    Solution current_modified_solution = initSolution;
-    //setAllTimingtoOne(current_solution);
-    double soil_amount_copy[GRID_SIZE_X][GRID_SIZE_Y];
+        //matchingAllocationsの中身をformerAllocationsに追加
+       for (const auto& alloc : matchingAllocations) {
+           tempFormerAllocations2.push_back(alloc.first);
+       }
+       
+    }
+    formerAllocations = tempFormerAllocations2; // 最終的にformerAllocationsに格納する
+}
+    //allocationOrderにformerAllocationsとlaterAllocationsを追加
+    allocationOrder.formerAllocations = formerAllocations;
+    allocationOrder.latterAllocations = latterAllocations;
+
+    return allocationOrder;
+}
+
+AllocationOrder initallizedAllocationOrder(const std::vector<Allocation>& allocations, const Solution& solution){
+    AllocationOrder newOrder;
+    for(const auto& allocation : allocations) {
+        //仮設道路が配置されているセルへの土砂配分はformerに入れる
+        if (isRoadAllocated(allocation.start, solution) || isRoadAllocated(allocation.goal, solution)) {
+            newOrder.formerAllocations.push_back(allocation);
+        } else {
+            newOrder.latterAllocations.push_back(allocation);
+        }
+    }
+    return newOrder;
+}
+
+std::vector<Allocation> randomizedAllocations(const std::vector<Allocation>& allocations, const Solution& solution){
+    std::vector<Allocation> newAllocations = allocations;
+    //shuffleする
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(newAllocations.begin(), newAllocations.end(), g);
+    return newAllocations;
+}
+
+AllocationOrder randomizedAllocationOrder(const AllocationOrder& allocationOrder){
+    //formerAllocationとlatterAllocationそれぞれをshuffleしてランダム化する
+    AllocationOrder randomizedOrder = allocationOrder;
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(randomizedOrder.formerAllocations.begin(), randomizedOrder.formerAllocations.end(), g);
+    std::shuffle(randomizedOrder.latterAllocations.begin(), randomizedOrder.latterAllocations.end(), g);
+    return randomizedOrder;
+}
+
+AllocationOrder generateNeighborAllocationOrder(
+    const AllocationOrder& current_order,
+    const Solution& solution,
+    const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]
+) {
+    //latterAllocationsとformerAllocationsの優先度を崩さずに変更
+    AllocationOrder neighbor_order = current_order;
+    //ランダムにformerAllocationsとlatterAllocationsのどちらを変更するか決定.
+    int modification_type = generateRandomInt(0, 1); // 0: formerAllocations, 1: latterAllocations
+    int operation_type = generateRandomInt(0, 2); // 0: swap, 1: insert, 2: reversal
+    std::vector<Allocation> targetAllocations = (modification_type == 0) ? neighbor_order.formerAllocations : neighbor_order.latterAllocations;
+    if(targetAllocations.empty() || targetAllocations.size() < 2) {
+        modification_type = 1-modification_type; // 変更するアロケーションがない場合は、もう一方のリストを変更する
+        targetAllocations = (modification_type == 0) ? neighbor_order.formerAllocations : neighbor_order.latterAllocations;
+        if(targetAllocations.empty() || targetAllocations.size() < 2) {
+            std::cout << "No allocations to modify." << std::endl;
+            return neighbor_order; // 変更するアロケーションがない場合はそのまま返す
+        }
+    }
+    if (modification_type == 0) {
+        std::cout << "Modifying formerAllocations." << std::endl;
+    } else {
+        std::cout << "Modifying latterAllocations." << std::endl;
+    }
+    switch (operation_type) {
+        case 0: { // Swap
+            std::cout << "Swap operation selected." << std::endl;
+            int index1 = generateRandomInt(0, targetAllocations.size() - 1);
+            int index2 = generateRandomInt(0, targetAllocations.size() - 1);
+            while (index1 == index2) {
+                index2 = generateRandomInt(0, targetAllocations.size() - 1);
+            }
+            // std::cout << "Swapping indices: " << index1 << " and " << index2 << std::endl;
+            
+            std::swap(targetAllocations[index1], targetAllocations[index2]);
+            break;
+        }
+        case 1: { // Insert
+            std::cout << "Insert operation selected." << std::endl;
+            int index = generateRandomInt(0, targetAllocations.size() - 1);
+            int insertIndex = generateRandomInt(0, targetAllocations.size()-1);
+            while (insertIndex == index) {
+                insertIndex = generateRandomInt(0, targetAllocations.size()-1);
+            }
+            // std::cout << "Inserting allocation from index " << index << " to index " << insertIndex << std::endl;
+            Allocation allocation = targetAllocations[index];
+            targetAllocations.erase(targetAllocations.begin() + index);
+            targetAllocations.insert(targetAllocations.begin() + insertIndex, allocation);
+            break;
+        }
+        case 2: { // Reversal
+            std::cout << "Reversal operation selected." << std::endl;
+
+            int start = generateRandomInt(0, targetAllocations.size() - 2); // -2 to ensure at least one element can be reversed
+            int end = generateRandomInt(start + 2, targetAllocations.size());
+            // std::cout << "Reversing from index " << start << " to index " << end << std::endl;
+            std::reverse(targetAllocations.begin() + start, targetAllocations.begin() + end);
+            break;
+        }
+        
+    }
+    //更新されたtargetAllocationsをneighbor_orderに反映
+    if (modification_type == 0) {
+        neighbor_order.formerAllocations = targetAllocations;
+    } else {
+        neighbor_order.latterAllocations = targetAllocations;
+    }
+    return neighbor_order;
+}
+
+
+std::vector<Allocation> generateNeighborAllocations(
+    const std::vector<Allocation>& current_allocations,
+    const Solution& solution,
+    const double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]
+) {
+    std::vector<Allocation> neighbor_allocations = current_allocations;
+    //ランダムにformerAllocationsとlatterAllocationsのどちらを変更するか決定.
+    int operation_type = generateRandomInt(0, 2); // 0: swap, 1: insert, 2: reversal
+    if(neighbor_allocations.empty() || neighbor_allocations.size() < 2) {
+            std::cout << "No allocations to modify." << std::endl;
+            return neighbor_allocations; // 変更するアロケーションがない場合はそのまま返す
+    }
+    switch (operation_type) {
+        case 0: { // Swap
+            std::cout << "Swap operation selected." << std::endl;
+            int index1 = generateRandomInt(0, neighbor_allocations.size() - 1);
+            int index2 = generateRandomInt(0, neighbor_allocations.size() - 1);
+            while (index1 == index2) {
+                index2 = generateRandomInt(0, neighbor_allocations.size() - 1);
+            }
+            // std::cout << "Swapping indices: " << index1 << " and " << index2 << std::endl;
+
+            std::swap(neighbor_allocations[index1], neighbor_allocations[index2]);
+            break;
+        }
+        case 1: { // Insert
+            std::cout << "Insert operation selected." << std::endl;
+            int index = generateRandomInt(0, neighbor_allocations.size() - 1);
+            int insertIndex = generateRandomInt(0, neighbor_allocations.size() - 1);
+            while (insertIndex == index) {
+                insertIndex = generateRandomInt(0, neighbor_allocations.size() - 1);
+            }
+            // std::cout << "Inserting allocation from index " << index << " to index " << insertIndex << std::endl;
+            Allocation allocation = neighbor_allocations[index];
+            neighbor_allocations.erase(neighbor_allocations.begin() + index);
+            neighbor_allocations.insert(neighbor_allocations.begin() + insertIndex, allocation);
+            break;
+        }
+        case 2: { // Reversal
+            std::cout << "Reversal operation selected." << std::endl;
+            int start = generateRandomInt(0, neighbor_allocations.size() - 2); // -2 to ensure at least one element can be reversed
+            int end = generateRandomInt(start + 2, neighbor_allocations.size());
+            // std::cout << "Reversing from index " << start << " to index " << end << std::endl;
+            std::reverse(neighbor_allocations.begin() + start, neighbor_allocations.begin() + end);
+            break;
+        }   
+    }
+    return neighbor_allocations;
+}
+
+void simulatedAnnealingForOrderOptimization(std::vector<Allocation>& allocations,  Solution& solution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    //allocationの順番を最適化
+    //random initialization
+    Solution current_solution = solution;
+    // AllocationOrder current_order = initallizedAllocationOrder(allocations, current_solution);
+    // current_order = randomizedAllocationOrder(current_order);
+    AllocationOrder current_order = generateAllocationOrderwithHeuristicRule(allocations, solution, soil_amount);
+
+    auto [current_result,current_score] = evaluate_design(current_order,soil_amount, current_solution);
+    std::cout << "initial_score: " << current_score << std::endl;
+    std::cout << "initial solution:" << std::endl;
+    current_solution.printParameters();
+    std::cout << "initial_order:" << std::endl;
+    current_order.printParameters();
+    if(current_score !=INF) {
+    std::cout << "initial_result:" << std::endl;
+    current_result.printPath();
+    }else{
+        std::cout << "initial_result is infeasible." << std::endl;
+    }
+    AllocationOrder best_order = current_order;
+    double best_score = current_score;
+    Result best_result = current_result;
+    int best_score_loop = 0;
+    Solution best_solution = current_solution;
+
+    // std::vector<std::pair<double, Solution>> best_score_flow;
+    // std::vector<std::pair<double, Solution>> current_score_flow;
+    // std::vector<std::pair<double, Solution>> neighbor_score_flow;
+    // std::vector<std::pair<double, Solution>> neighbor_solution_flow;
+
+    int temperature = initialTemperature;
+    for (int iter = 0; iter < max_iter; ++iter) {
+        //reset soil_amount copy
+        double soil_amount_copy[GRID_SIZE_X][GRID_SIZE_Y];
         for (int i = 0; i < GRID_SIZE_X; i++) {
             for (int j = 0; j < GRID_SIZE_Y; j++) {
                 soil_amount_copy[i][j] = soil_amount[i][j];
             }
         }
-    auto [current_result,current_score] = evaluate_design(allocations,soil_amount_copy, current_solution);
+        temperature *= alpha;
 
-    Solution best_solution = current_solution;
-    Solution best_modified_solution = current_modified_solution;
+        //print current solution and result
+        auto neighbor_order = generateNeighborAllocationOrder(current_order, current_solution, soil_amount_copy);
+        std::vector<Allocation> neighbor_allocations;
+        neighbor_allocations.insert(neighbor_allocations.end(), neighbor_order.formerAllocations.begin(), neighbor_order.formerAllocations.end());
+        neighbor_allocations.insert(neighbor_allocations.end(), neighbor_order.latterAllocations.begin(), neighbor_order.latterAllocations.end());
+        auto neighbor_solution = generateSolutionTiming(current_solution, neighbor_allocations, soil_amount_copy);
+        auto [neighbor_result, neighbor_score] = evaluate_design(neighbor_order, soil_amount_copy, neighbor_solution);
+        std::cout << "neighbor_score: " << neighbor_score << std::endl;
+        std::cout << "neithbor_solution:" << std::endl;
+        neighbor_solution.printParameters();
+        std::cout << "neighbor_order:" << std::endl;
+        neighbor_order.printParameters();
+        std::cout << "neighbor_result:" << std::endl;
+        neighbor_result.printPath();
+        std::cout << std::endl;
+        double random_value = generateRandomDouble(0.0, 1.0);
+
+        if(neighbor_score == INF){
+            std::cout << "Neighbor solution is infeasible, skipping acceptance." << std::endl;
+            continue; // If the neighbor solution is infeasible, skip acceptance
+        }
+        // 受け入れ判定
+        if ((neighbor_score < current_score) || 
+            (random_value < std::exp(-(std::abs(neighbor_score - current_score)) / temperature))) {
+            current_order = neighbor_order;
+            current_score = neighbor_score;
+            current_result = neighbor_result;
+            current_solution = neighbor_solution;
+        }
+        
+        std::cout <<"current _score: " << current_score << std::endl;
+        std::cout << "current_order:" << std::endl;
+        current_order.printParameters();
+        std::cout << "current_result:" << std::endl;
+        current_result.printPath();
+
+        // ベスト解の更新
+        if (current_score < best_score) {
+            best_order = current_order;
+            best_score = current_score;
+            best_score_loop = iter;
+            best_result = current_result;
+            best_solution = current_solution;
+        }
+        std::cout <<std::endl;
+        std::cout <<std::endl;
+    }
+
+
+    //print best solution and result
+    std::cout << "best_solution:" << std::endl;
+    best_solution.printParametersForPlot();
+    std::cout << "best_order:" << std::endl;
+    best_order.printParametersForPlot();
+    std::cout << "best_score: " << best_score << std::endl;
+    best_result.printPathForPlot(best_order.orderToVector());
+    std::cout << "best_score_loop: " << best_score_loop << std::endl;
+}
+
+void simulatedAnnealingForOrderOptimizationWithNoRestriction(std::vector<Allocation>& allocations, Solution& solution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    //allocationの順番を最適化
+    //formerAllocationsとlatterAllocationsの優先度は崩してもよい条件で
+    //random initialization
+    Solution current_solution = solution;
+    std::cout << "before randomizedAllocations" << std::endl;
+    auto current_allocations = randomizedAllocations(allocations, current_solution);
+
+    //initialization with heuristic rule
+    // AllocationOrder current_order = generateAllocationOrderwithHeuristicRule(allocations, solution, soil_amount);
+    // std::vector<Allocation> current_allocations = current_order.formerAllocations;
+    // current_allocations.insert(current_allocations.end(), current_order.latterAllocations.begin(), current_order.latterAllocations.end());
+    
+    std::cout << "before generateSolutionTiming" << std::endl;
+    current_solution = generateSolutionTiming(current_solution, current_allocations, soil_amount);
+    
+    std::cout << "after generateSolutionTiming" << std::endl;
+    auto [current_result,current_score] = evaluate_design(current_allocations,soil_amount, solution);
+    std::cout << "after evaluate_design" << std::endl;
+    std::cout << "initial_score: " << current_score << std::endl;
+    std::cout << "initial_order:" << std::endl;
+    for(const auto& alloc : current_allocations) {
+        std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+    }
+    if(current_score !=INF) {
+    std::cout << "initial_result:" << std::endl;
+    current_result.printPath();
+    }else{
+        std::cout << "initial_result is infeasible." << std::endl;
+    }
+    auto  best_allocations = current_allocations;
+    auto best_solution = current_solution;
     double best_score = current_score;
     Result best_result = current_result;
     int best_score_loop = 0;
@@ -1932,7 +3139,6 @@ void simulated_annealing(std::vector<Allocation>& allocations, const Solution& i
 
     int temperature = initialTemperature;
     for (int iter = 0; iter < max_iter; ++iter) {
-        std::cout << "Iteration: " << iter << std::endl;
         //reset soil_amount copy
         double soil_amount_copy[GRID_SIZE_X][GRID_SIZE_Y];
         for (int i = 0; i < GRID_SIZE_X; i++) {
@@ -1940,112 +3146,71 @@ void simulated_annealing(std::vector<Allocation>& allocations, const Solution& i
                 soil_amount_copy[i][j] = soil_amount[i][j];
             }
         }
-        //print soil_amount_copy
-        std::cout << "soil_amount before generate_neighbor" << std::endl;
-        for (int i = 0; i < GRID_SIZE_X; ++i) {
-            for (int j = 0; j < GRID_SIZE_Y; ++j) {
-                std::cout << soil_amount_copy[i][j] << " ";
-            }
-            std::cout << std::endl;
-        }
-        auto neighbor_result = current_result;
         temperature *= alpha;
 
         //print current solution and result
-        auto [neighbor_solution,neighbor_modified_solution,neighbor_score] = generate_neighbor(current_solution,neighbor_result, allocations, soil_amount_copy);
-        std::cout << "generate_neighbor called" << std::endl;
-        std::cout << "neighbor_solution after generate_neighbor" << std::endl;
-        neighbor_solution.printParametersModified();
-        std::cout << std::endl;
-        std::cout << "neighbor_modified_solution after generate_neighbor" << std::endl;
-        neighbor_modified_solution.printParametersModified();
-        std::cout << std::endl;
+        auto neighbor_allocations = generateNeighborAllocations(current_allocations, current_solution, soil_amount_copy);
+        auto neighbor_solution = generateSolutionTiming(current_solution, neighbor_allocations, soil_amount_copy);
+        auto [neighbor_result, neighbor_score] = evaluate_design(neighbor_allocations, soil_amount_copy, neighbor_solution);
+        // std::cout << "neighbor_score: " << neighbor_score << std::endl;
+        // std::cout << "neighbor_allocations:" << std::endl;
+        // for(const auto& alloc : neighbor_allocations) {
+        //     std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+        // }
+        // std::cout << "neighbor_result:" << std::endl;
+        // neighbor_result.printPath();
+        // std::cout << std::endl;
+        // std::cout << "neighbor_solution:" << std::endl;
+        // neighbor_solution.printParameters();
         double random_value = generateRandomDouble(0.0, 1.0);
+
+        if(neighbor_score == INF){
+            std::cout << "Neighbor solution is infeasible, skipping acceptance." << std::endl;
+            continue; // If the neighbor solution is infeasible, skip acceptance
+        }
         // 受け入れ判定
         if ((neighbor_score < current_score) || 
             (random_value < std::exp(-(std::abs(neighbor_score - current_score)) / temperature))) {
-            current_solution = neighbor_solution;
+            if(neighbor_score < current_score) {
+                std::cout << "Accepting neighbor solution with better score." << std::endl;
+            } 
+            current_allocations = neighbor_allocations;
             current_score = neighbor_score;
             current_result = neighbor_result;
-            current_modified_solution = neighbor_modified_solution;
+            current_solution = neighbor_solution;
         }
+        
+        // std::cout <<"current _score: " << current_score << std::endl;
+        // std::cout << "current_allocations:" << std::endl;
+        // for(const auto& alloc : current_allocations) {
+        //     std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+        // }
+        // std::cout << "current_result:" << std::endl;
+        // current_result.printPath();
 
         // ベスト解の更新
         if (current_score < best_score) {
-            best_solution = current_solution;
+            best_allocations = current_allocations;
             best_score = current_score;
             best_score_loop = iter;
             best_result = current_result;
-            best_modified_solution = current_modified_solution;
+            best_solution = current_solution;
         }
-        std::cout << "iteration done" << std::endl;
+        std::cout <<std::endl;
+        std::cout <<std::endl;
     }
 
     //print best solution and result
+    std::cout << "best_solution:" << std::endl;
+    best_solution.printParametersForPlot();
+    std::cout << "best_allocations:" << std::endl;
+    for(const auto& alloc : best_allocations) {
+        std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+    }
     std::cout << "best_score: " << best_score << std::endl;
-    // best_solution.printParameters();
-    best_modified_solution.printParametersForPlot();
-    best_result.printPathForPlot(allocations);
+    best_result.printPathForPlot(best_allocations);
     std::cout << "best_score_loop: " << best_score_loop << std::endl;
 }
-
-
-// void simulated_annealing(std::vector<Allocation>& allocations, const Solution& initSolution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
-//     Solution current_solution = initSolution;
-//     //setAllTimingtoOne(current_solution);
-//     auto [current_result,current_score] = evaluate_design(allocations,soil_amount, current_solution);
-
-//     Solution best_solution = current_solution;
-//     double best_score = current_score;
-//     Result best_result = current_result;
-//     int best_score_loop = 0;
-
-//     // std::vector<std::pair<double, Solution>> best_score_flow;
-//     // std::vector<std::pair<double, Solution>> current_score_flow;
-//     // std::vector<std::pair<double, Solution>> neighbor_score_flow;
-//     // std::vector<std::pair<double, Solution>> neighbor_solution_flow;
-
-//     int temperature = initialTemperature;
-//     for (int iter = 0; iter < max_iter; ++iter) {
-//         //reset soil_amount copy
-//         double soil_amount_copy[GRID_SIZE_X][GRID_SIZE_Y];
-//         for (int i = 0; i < GRID_SIZE_X; i++) {
-//             for (int j = 0; j < GRID_SIZE_Y; j++) {
-//                 soil_amount_copy[i][j] = soil_amount[i][j];
-//             }
-//         }
-//         auto neighbor_result = current_result;
-//         temperature *= alpha;
-
-//         //print current solution and result
-//         auto [neighbor_solution,neighbor_score] = generate_neighbor(current_solution,neighbor_result, allocations, soil_amount_copy);
-//         neighbor_solution.printParameters();
-        
-//         double random_value = generateRandomDouble(0.0, 1.0);
-//         // 受け入れ判定
-//         if ((neighbor_score < current_score) || 
-//             (random_value < std::exp(-(std::abs(neighbor_score - current_score)) / temperature))) {
-//             current_solution = neighbor_solution;
-//             current_score = neighbor_score;
-//             current_result = neighbor_result;
-//         }
-
-//         // ベスト解の更新
-//         if (current_score < best_score) {
-//             best_solution = current_solution;
-//             best_score = current_score;
-//             best_score_loop = iter;
-//             best_result = current_result;
-//         }
-//     }
-
-//     //print best solution and result
-//     std::cout << "best_score: " << best_score << std::endl;
-//     best_solution.printParameters();
-//     best_result.printPath();
-//     std::cout << "best_score_loop: " << best_score_loop << std::endl;
-
-// }
 
 int main() {
     auto start = std::chrono::high_resolution_clock::now();
@@ -2053,19 +3218,40 @@ int main() {
     //Initialize soil_amount
     double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
     {
-        {-15000.0, -62600.0, -3700.0, 0.0},
+        {-126200.0, -62600.0, -3700.0, 0.0},
         {-3700.0, 22500.0, 22500.0, -1400.0},
         {3700.0, 33800.0, 28100.0, 2300.0},
         {9000.0, 36000.0, 23000.0, 1200.0},
         {9000.0, 23000.0, 24300.0, 9000.0},
         {8000.0, 22200.0, 14200.0, -5900.0},
         {-1000.0, 8100.0, -12400.0, -9900.0},
-        {-11200.0, -24800.0, -34400.0, -2700.0},
-        {-2300.0, -9900.0, -72500.0, 2300.0},
-        {-22000.0, -2200.0, -28500.0, -100.0},
-        {-6900.0, 14300.0, -2500.0, 0.0},
-        {11200.0, 7900.0, 0.0, 0.0}
+        {-11200.0, -24800.0, -34400.0, -2700.0}
     };
+    // double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
+    // {
+    //     {0,0,-1,0},
+    //     {0,-1,0,-1},
+    //     {0,0,2,0},
+    //     {0,0,1,0},
+    // };
+    //   double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
+    // {
+    //     {1,0,-1,0},
+    //     {0,0,2,-1},
+    //     {1,-1,1,-1},
+    //     {0,-1,-1,1},
+    // };
+    // double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
+    // {
+    //     {0,0,0,0},
+    //     {0,0,0,0},
+    //     {0,0,2,0},
+    //     {0,0,1,0},
+    //     {0,0,0,0},
+    //     {0,0,0,0},
+    //     {0,0,0,0},
+    //     {0,-1,-3,-1}
+    // };
     // double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]  =
     // {
     //     {1,0},
@@ -2074,51 +3260,80 @@ int main() {
     //check if sum of soil_amount is zero
     checkSoilAmountTotal(soil_amount);
     // Initialize allocations
-    std::vector<Allocation> allocations = 
-    {
-        {{11, 1}, {10, 2}, 2500.0},
-        {{11, 1}, {9, 2}, 5400.0},
-        {{11, 0}, {10, 0}, 6900.0},
-        {{11, 0}, {9, 0}, 4300.0},
-        {{10, 1}, {9, 2}, 12100.0},
-        {{10, 1}, {9, 1}, 2200.0},
-        {{8, 3}, {9, 3}, 100.0},
-        {{8, 3}, {9, 2}, 2200.0},
-        {{3, 1}, {9, 2}, 8800.0},
-        {{5, 0}, {9, 0}, 8000.0},
-        {{4, 0}, {9, 0}, 4000.0},
-        {{3, 0}, {9, 0}, 5700.0},
-        {{5, 2}, {8, 2}, 14200.0},
-        {{4, 2}, {8, 2}, 24300.0},
-        {{4, 1}, {8, 2}, 17400.0},
-        {{3, 1}, {8, 2}, 16600.0},
-        {{6, 1}, {8, 1}, 8100.0},
-        {{3, 1}, {8, 1}, 1800.0},
-        {{3, 0}, {8, 0}, 2300.0},
-        {{2, 2}, {7, 3}, 2700.0},
-        {{4, 1}, {7, 2}, 5600.0},
-        {{3, 2}, {7, 2}, 22100.0},
-        {{2, 2}, {7, 2}, 6700.0},
-        {{5, 1}, {7, 1}, 22200.0},
-        {{3, 1}, {7, 1}, 2600.0},
-        {{4, 0}, {7, 0}, 5000.0},
-        {{3, 1}, {7, 0}, 6200.0},
-        {{4, 3}, {6, 3}, 9000.0},
-        {{3, 2}, {6, 3}, 900.0},
-        {{2, 2}, {6, 2}, 12400.0},
-        {{3, 0}, {6, 0}, 1000.0},
-        {{3, 3}, {5, 3}, 1200.0},
-        {{2, 3}, {5, 3}, 900.0},
-        {{2, 2}, {5, 3}, 3800.0},
-        {{2, 3}, {1, 3}, 1400.0},
-        {{2, 2}, {0, 1}, 2500.0},
-        {{1, 2}, {0, 2}, 3700.0},
-        {{2, 1}, {1, 0}, 3700.0},
-        {{2, 1}, {0, 1}, 30100.0},
-        {{1, 2}, {0, 1}, 18800.0},
-        {{2, 0}, {0, 0}, 3700.0},
-        {{1, 1}, {0, 1}, 11200.0},
-        {{1, 1}, {0, 0}, 11300.0}
+    //   std::vector<Allocation> allocations = 
+    // {
+    //     {{2, 2}, {0, 2}, 1},
+    //     {{2, 2}, {1, 1}, 1},
+    //     {{3, 2}, {1, 3}, 1},
+    // };
+
+    // std::vector<Allocation> allocations = 
+    // {
+    //     {{2, 2}, {2, 3}, 1},
+    //     {{2, 0}, {2, 1}, 1},
+    //     {{3, 3}, {1, 3}, 1},
+    //     {{0, 0}, {0, 2}, 1},
+    //     {{1, 2}, {3, 1}, 1},
+    //     {{1, 2}, {3, 2}, 1}
+    // };
+
+    // std::vector<Allocation> allocations = 
+    // {
+    //     {{2, 2}, {7, 3}, 2700.0},
+    //     {{4, 1}, {7, 2}, 5600.0},
+    //     {{3, 2}, {7, 2}, 22100.0},
+    //     {{2, 2}, {7, 2}, 6700.0},
+    //     {{5, 1}, {7, 1}, 22200.0},
+    //     {{3, 1}, {7, 1}, 2600.0},
+    //     {{4, 0}, {7, 0}, 5000.0},
+    //     {{3, 1}, {7, 0}, 6200.0},
+    //     {{4, 3}, {6, 3}, 9000.0},
+    //     {{3, 2}, {6, 3}, 900.0},
+    //     {{2, 2}, {6, 2}, 12400.0},
+    //     {{3, 0}, {6, 0}, 1000.0},
+    //     {{3, 3}, {5, 3}, 1200.0},
+    //     {{2, 3}, {5, 3}, 900.0},
+    //     {{2, 2}, {5, 3}, 3800.0},
+    //     {{2, 3}, {1, 3}, 1400.0},
+    //     {{2, 2}, {0, 1}, 2500.0},
+    //     {{1, 2}, {0, 2}, 3700.0},
+    //     {{2, 1}, {1, 0}, 3700.0},
+    //     {{2, 1}, {0, 1}, 30100.0},
+    //     {{1, 2}, {0, 1}, 18800.0},
+    //     {{2, 0}, {0, 0}, 3700.0},
+    //     {{1, 1}, {0, 1}, 11200.0},
+    //     {{1, 1}, {0, 0}, 11300.0}
+    // };
+    std::vector<Allocation> allocations = {
+    {{4, 2}, {7, 3}, 2700.0},
+    {{5, 2}, {7, 2}, 14200.0},
+    {{5, 1}, {7, 2}, 5500.0},
+    {{4, 2}, {7, 2}, 2400.0},
+    {{4, 1}, {7, 2}, 12300.0},
+    {{6, 1}, {7, 1}, 8100.0},
+    {{5, 1}, {7, 1}, 16700.0},
+    {{5, 0}, {7, 0}, 8000.0},
+    {{4, 0}, {7, 0}, 3200.0},
+    {{4, 3}, {6, 3}, 3100.0},
+    {{4, 2}, {6, 3}, 6800.0},
+    {{4, 2}, {6, 2}, 12400.0},
+    {{4, 0}, {6, 0}, 1000.0},
+    {{4, 3}, {5, 3}, 5900.0},
+    {{3, 3}, {0, 2}, 1200.0},
+    {{4, 1}, {0, 0}, 10700.0},
+    {{4, 0}, {0, 0}, 4800.0},
+    {{2, 3}, {1, 3}, 1400.0},
+    {{2, 3}, {0, 2}, 900.0},
+    {{3, 2}, {0, 1}, 13600.0},
+    {{3, 2}, {0, 0}, 9400.0},
+    {{3, 1}, {0, 0}, 36000.0},
+    {{3, 0}, {0, 0}, 9000.0},
+    {{2, 2}, {0, 1}, 28100.0},
+    {{1, 2}, {0, 2}, 1600.0},
+    {{1, 2}, {0, 1}, 20900.0},
+    {{2, 1}, {0, 0}, 33800.0},
+    {{2, 0}, {1, 0}, 3700.0},
+    {{1, 1}, {0, 0}, 22500.0},
     };
 
     // Initialize Solution
@@ -2135,27 +3350,25 @@ int main() {
     CoordPair coordpair10 = {{{4, 1},{5, 1}}};
     CoordPair coordpair11 = {{{5, 1},{6, 1}}};
     CoordPair coordpair12 = {{{6, 1},{7, 1}}};
-    CoordPair coordpair13 = {{{7, 1},{8, 1}}};
-    CoordPair coordpair14 = {{{8, 1},{9, 1}}};
-    CoordPair coordpair15 = {{{5, 2},{6, 1}}};
+    CoordPair coordpair13 = {{{3, 2},{4, 1}}};
 
 
-    //normalize coordpair
-   normalize_pair(coordpair1);
-   normalize_pair(coordpair2);
-   normalize_pair(coordpair3);
-   normalize_pair(coordpair4);
-   normalize_pair(coordpair5);
-   normalize_pair(coordpair6);
-   normalize_pair(coordpair7);
-   normalize_pair(coordpair8);
+
+        //normalize coordpair
+    normalize_pair(coordpair1);
+    normalize_pair(coordpair2);
+    normalize_pair(coordpair3);
+    normalize_pair(coordpair4);
+    normalize_pair(coordpair5);
+    normalize_pair(coordpair6);
+    normalize_pair(coordpair7);
+    normalize_pair(coordpair8);
     normalize_pair(coordpair9);
     normalize_pair(coordpair10);
     normalize_pair(coordpair11);
     normalize_pair(coordpair12);
     normalize_pair(coordpair13);
-    normalize_pair(coordpair14);
-    normalize_pair(coordpair15);
+
 
 
     std::vector<CoordPair> coordpairlist;
@@ -2172,8 +3385,6 @@ int main() {
     coordpairlist.push_back(coordpair11);
     coordpairlist.push_back(coordpair12);
     coordpairlist.push_back(coordpair13);
-    coordpairlist.push_back(coordpair14);
-    coordpairlist.push_back(coordpair15);
 
     Solution initSolution = initializedSolution(stepNum,coordpairlist);
     TemporaryRoads temps;
@@ -2186,14 +3397,35 @@ int main() {
                 soil_amount_copy[i][j] = soil_amount[i][j];
             }
         }
-    auto [result,operate_cost,built_length] = processAllocations(allocations, initSolution, soil_amount_copy);
 
+    // //test generateAllocationOrderwithHeuristicRule
+    // auto allocationOrder = generateAllocationOrderwithHeuristicRule(allocations, initSolution, soil_amount);
+    // std::cout << "Allocation Order:" << std::endl;
+    // std::cout << "Former Allocations:" << std::endl;
+    // for (const auto& allocation : allocationOrder.formerAllocations) {
+    //     std::cout << "  From: (" << allocation.start.x << ", " << allocation.start.y << ") "
+    //               << "To: (" << allocation.goal.x << ", " << allocation.goal.y << ") "
+    //               << "Amount: " << allocation.volume << std::endl;
+    // }
+    // std::cout << "Latter Allocations:" << std::endl;
+    // for (const auto& allocation : allocationOrder.latterAllocations) {
+    //     std::cout << "  From: (" << allocation.start.x << ", " << allocation.start.y << ") "
+    //               << "To: (" << allocation.goal.x << ", " << allocation.goal.y << ") "
+    //               << "Amount: " << allocation.volume << std::endl;
+    // }
 
-    // //test simulated_annealing
-    simulated_annealing(allocations, initSolution, soil_amount);
+    double soil_amount_temp[GRID_SIZE_X][GRID_SIZE_Y] = {0};
+    TemporaryRoads temps_copy;
+    temps_copy.initialize(initSolution);
+    temps_copy.setStatusToOne();
 
-    // Print initial solution
-    // Test buildNewRoad
+    initSolution = generateSolutionTiming(initSolution, allocations, soil_amount_temp);
 
+    initSolution.printParameters();
+    //test astar
+    int roadNum = initSolution.roadNum;
+    // test simulatedAnnealingForOrderOptimization
+    // simulatedAnnealingForOrderOptimization(allocations, initSolution, soil_amount_copy);
+    simulatedAnnealingForOrderOptimizationWithNoRestriction(allocations, initSolution, soil_amount_copy);
     return 0;
 }
