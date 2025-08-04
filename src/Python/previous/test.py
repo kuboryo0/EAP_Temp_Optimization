@@ -36,6 +36,29 @@ def find_connected_components(connected_edges):
     components = list(nx.connected_components(G))
     print(" Connected components:", components)
 
+    non_singleton_components = [comp for comp in components if len(comp) > 1]
+    print("Connected components (excluding singletons):", non_singleton_components)
+
+    if len(non_singleton_components) == 0:
+        print("No connected components with more than one node.")
+        return
+    
+    largest_component = non_singleton_components[0]
+    if len(non_singleton_components) == 1:        
+        print("Only one large component found:", largest_component)
+        if entrance_node in largest_component:
+            print(f"Entrance node {entrance_node} is included in the component. No further action needed.")
+            return
+        else:
+            print(f"Entrance node {entrance_node} is NOT included in the component.")
+    else:
+        if entrance_node in largest_component:
+            print(f"Entrance node {entrance_node} is included in the largest component.")
+        else:
+            print(f"Entrance node {entrance_node} is NOT included in the largest component.")
+    # 道路がつながっていない場合または入り口ノードを含まない場合
+    largest_component = max(non_singleton_components, key=len)
+    print("Largest component (excluding singletons):", largest_component)
     # 最大連結成分
     largest_component = max(components, key=len)
     print(" Largest component:", largest_component)
@@ -73,5 +96,6 @@ def find_connected_components(connected_edges):
 
     # --- 入口から到達できるノード集合 ---
     reachable_from_entrance = nx.node_connected_component(G, entrance_node)
+    print(f"\nNodes reachable from entrance {entrance_node}: {reachable_from_entrance}")
 
 find_connected_components(connected_edges)

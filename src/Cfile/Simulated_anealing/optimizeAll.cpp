@@ -11,9 +11,10 @@
 #include <ctime> 
 #include <chrono>
 #include <stack>
+#include <fstream>
 
 // Objective function parameters
-#define GRID_SIZE_X 4
+#define GRID_SIZE_X 12
 #define GRID_SIZE_Y 4
 #define DIRECTIONS_COUNT 8
 #define INF std::numeric_limits<double>::infinity()
@@ -22,24 +23,24 @@
 // #define VELOCITY_ROUGH 24.0
 #define VELOCITY_ROUGH 10.0
 #define VELOCITY_PAVE 40.0
-#define VELOCITY_SHOVEL 5.0
+// #define VELOCITY_SHOVEL 5.0
 #define TEMP_EFF VELOCITY_ROUGH/VELOCITY_PAVE // Temporary road efficiency
-#define GRID_SIZE 1
-#define V_TRUCK (40.0/150.0) //[m^3]
+#define GRID_SIZE 150
+// #define V_TRUCK (40.0/150.0/150.0) //[m^3]
+#define V_TRUCK 40.0 //[m^3]
 #define TRUCK_NUM 1
 #define COST_HOUR 2000.0
 #define WORK_EFF 0.75
 #define CONSTRUCTION_TEMP 15.0
-#define CONSTRUCTION_SUB_TEMP 5.0
+#define CONSTRUCTION_SUB_TEMP 1.5
 #define CONSTRUCTION_TEMP_DIFF (CONSTRUCTION_TEMP - CONSTRUCTION_SUB_TEMP)
-
 #define entranceXPostion 0
 #define entranceYPostion 2
 #define entranceIndex entranceXPostion * GRID_SIZE_Y + entranceYPostion
 
 // Simulated Annealing parameters
 #define alpha 0.97
-#define max_iter 500
+#define max_iter 600
 #define initialTemperature 10000.0
 
 struct Coord {
@@ -134,6 +135,35 @@ struct Solution {
         std::cout << "]"<<std::endl;
     }
 
+    void printParametersForPlot(std::ostream& os = std::cout) {
+        // std::cout << "roadNum: " << roadNum << std::endl;
+        // std::cout << "stepNum: " << stepNum << std::endl;
+        os << "[" << std::endl;
+        for (int i = 0; i < roadNum; i++) {
+             //もしtimingsが全て0ならば出力しない
+            bool allZero = true;
+            for (int j = 0; j < stepNum; j++) {
+                if (roadbuildStatusList[i].timings[j] != 0) {
+                    allZero = false;
+                    break;
+                }
+            }
+            if (allZero) {
+                continue; // 全て0ならば出力しない
+            }
+
+            os << "[[(" << roadbuildStatusList[i].coordpair.coords[0].x << ", " << roadbuildStatusList[i].coordpair.coords[0].y << "), ("
+                      << roadbuildStatusList[i].coordpair.coords[1].x << ", " << roadbuildStatusList[i].coordpair.coords[1].y << ")], [";
+            os << roadbuildStatusList[i].timings[0]  ;
+            for (int j = 1; j < stepNum; j++) {
+                os << ", "<<roadbuildStatusList[i].timings[j];
+            }
+            os << "]]," << std::endl;
+        }
+        os << "]"<<std::endl;
+    }
+
+
     void printParametersModified() {
         std::cout << "roadNum: " << roadNum << std::endl;
         std::cout << "stepNum: " << stepNum << std::endl;
@@ -154,6 +184,30 @@ struct Solution {
                       << roadbuildStatusList[i].coordpair.coords[1].x << ", " << roadbuildStatusList[i].coordpair.coords[1].y << ")" << std::endl;
             for (int j = 0; j < stepNum; j++) {
                 std::cout << "  timing[" << j << "]: " << roadbuildStatusList[i].timings[j] << std::endl;
+            }
+        }
+    }
+
+    void recordParametersModified(std::ostream& os = std::cout) {
+        os << "roadNum: " << roadNum << std::endl;
+        os << "stepNum: " << stepNum << std::endl;
+        for (int i = 0; i < roadNum; i++) {
+            //もしtimingsが全て0ならば出力しない
+            bool allZero = true;
+            for (int j = 0; j < stepNum; j++) {
+                if (roadbuildStatusList[i].timings[j] != 0) {
+                    allZero = false;
+                    break;
+                }
+            }
+            if (allZero) {
+                continue; // 全て0ならば出力しない
+            }
+
+            os << "coordpair[" << i << "]: (" << roadbuildStatusList[i].coordpair.coords[0].x << ", " << roadbuildStatusList[i].coordpair.coords[0].y << "), ("
+                      << roadbuildStatusList[i].coordpair.coords[1].x << ", " << roadbuildStatusList[i].coordpair.coords[1].y << ")" << std::endl;
+            for (int j = 0; j < stepNum; j++) {
+                os << "  timing[" << j << "]: " << roadbuildStatusList[i].timings[j] << std::endl;
             }
         }
     }
@@ -326,6 +380,18 @@ struct Result {
                 std::cout << "->(" << path[i].coord[j].x << ", " << path[i].coord[j].y << ")";
             }
             std::cout << std::endl;
+        }
+    }
+
+    void recordPath(std::ostream& os = std::cout) {
+        os << "path" << std::endl;
+        for (int i = 0; i < size; i++) {
+            os << "step[" << i << "]: ";
+            os << "(" << path[i].coord[0].x << ", " << path[i].coord[0].y << ")";
+            for (int j = 1; j < path[i].size(); j++) {
+                os << "->(" << path[i].coord[j].x << ", " << path[i].coord[j].y << ")";
+            }
+            os << std::endl;
         }
     }
 
@@ -1804,6 +1870,8 @@ double costCalculation( double operate_cost,double built_length,double shovel_mo
     double cost_road = built_length * CONSTRUCTION_TEMP * GRID_SIZE;
     // double shovel_time_average = shovel_move_cost * GRID_SIZE / (VELOCITY_SHOVEL * 1000.0); // 所要時間 (h)
     // double cost_shovel_move = COST_HOUR * shovel_time_average / WORK_EFF;
+    // std::cout << "cost_construction: " << cost_construction << std::endl;
+    // std::cout << "cost_road: " << cost_road << std::endl;
     return cost_construction + cost_road ;
 }
 
@@ -1813,9 +1881,9 @@ std::tuple<Result,double,Solution> evaluate_design(
     double soil_amount[GRID_SIZE_X][GRID_SIZE_Y],
     const Solution& solution
 ) {
-    std::cout << "process allocations..." << std::endl;
+    // std::cout << "process allocations..." << std::endl;
     auto [result, cost_operate, built_length, shovel_move_cost,sub_solution] = processAllocations(allocations, solution, soil_amount);
-    std::cout << "process allocation completed." << std::endl;
+    // std::cout << "process allocation completed." << std::endl;
     // std::cout <<  "cost operate: " << cost_operate << std::endl;
     // std::cout <<  "built length: " << built_length << std::endl;
     // std::cout <<  "shovel move cost(not added): " << shovel_move_cost << std::endl;
@@ -2129,12 +2197,22 @@ std::vector<std::vector<int>> searchUsedTempRoads(
     const Solution& solution,
     const Result& result){
     //各仮設道路に対してresult.path上に使用されているかを確認する
+
+    // Solution temp_solution = solution;
+    // Result temp_result = result;
+    // std::cout << "solution" << std::endl;
+    // temp_solution.printParameters();
+    // std::cout << "result" << std::endl;
+    // temp_result.printPath();
+    // temp_result.printUsedRoadFlow();
+
     std::vector<std::vector<int>> usedTempRoads(solution.stepNum, std::vector<int>(solution.roadNum, 0));
     for(size_t i = 0; i < solution.stepNum; ++i) {
         for(size_t j = 0; j < solution.roadNum; ++j) {
             //solution.roadbuildStatusList[j]のcoordpairがresult.path[i]に含まれているかを確認する
             const CoordPair& coordpair = solution.roadbuildStatusList[j].coordpair;
-            for ( size_t k = 0; k < result.path[i].coord.size()-1; ++k) {
+            if (result.path[i].coord.size() < 2) continue;
+            for (size_t k = 0; k < result.path[i].coord.size()-1; ++k) {
                 CoordPair pathCoordpair = {result.path[i].coord[k], result.path[i].coord[k+1]};
                 if ((pathCoordpair.coords[0].x == coordpair.coords[0].x && pathCoordpair.coords[0].y == coordpair.coords[0].y && pathCoordpair.coords[1].x == coordpair.coords[1].x && pathCoordpair.coords[1].y == coordpair.coords[1].y) ||
                     (pathCoordpair.coords[1].x == coordpair.coords[0].x && pathCoordpair.coords[1].y == coordpair.coords[0].y && pathCoordpair.coords[0].x == coordpair.coords[1].x && pathCoordpair.coords[0].y == coordpair.coords[1].y)) {
@@ -2144,7 +2222,6 @@ std::vector<std::vector<int>> searchUsedTempRoads(
             }
         }
     }
-
     return usedTempRoads;
 }
 
@@ -2156,9 +2233,18 @@ Solution generateSolutionTiming(
     ) {
         Solution neighbor_solution = current_solution;
         setAllTimingtoOne(neighbor_solution);
+        // std::cout << "process allocations..." << std::endl;
         auto [local_result,local_operate_cost,local_builtlength,local_shovel_move_cost,local_sub_solution] = processAllocations(allocations, neighbor_solution, soil_amount);
+        // std::cout << "process allocation completed." << std::endl;
         // Adjust timings based on path
+        // std::cout << "searching used temporary roads..." << std::endl;
+
+        if(local_operate_cost == INF) {
+            // std::cout << "local_operate_cost is INF, returning empty solution." << std::endl;
+            return neighbor_solution; // 無限コストの場合は空の解を返す
+        }
         auto usedTempRoads = searchUsedTempRoads(neighbor_solution, local_result);
+        // std::cout << "used temporary roads searched." << std::endl;
         for (size_t i = 0; i < neighbor_solution.stepNum; ++i) {
             for (size_t j = 0; j < neighbor_solution.roadNum; ++j) {
                 if (usedTempRoads[i][j] == 0) {
@@ -3363,224 +3449,6 @@ std::vector<Allocation> generateNeighborAllocations(
     return neighbor_allocations;
 }
 
-
-// void simulatedAnnealingForOrderOptimization(std::vector<Allocation>& allocations,  Solution& solution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
-//     //allocationの順番を最適化
-//     //random initialization
-//     Solution current_solution = solution;
-//     // AllocationOrder current_order = initallizedAllocationOrder(allocations, current_solution);
-//     // current_order = randomizedAllocationOrder(current_order);
-//     AllocationOrder current_order = generateAllocationOrderwithHeuristicRule(allocations, solution, soil_amount);
-
-//     auto [current_result,current_score] = evaluate_design(current_order,soil_amount, current_solution);
-//     std::cout << "initial_score: " << current_score << std::endl;
-//     std::cout << "initial solution:" << std::endl;
-//     current_solution.printParameters();
-//     std::cout << "initial_order:" << std::endl;
-//     current_order.printParameters();
-//     if(current_score !=INF) {
-//     std::cout << "initial_result:" << std::endl;
-//     current_result.printPath();
-//     }else{
-//         std::cout << "initial_result is infeasible." << std::endl;
-//     }
-//     AllocationOrder best_order = current_order;
-//     double best_score = current_score;
-//     Result best_result = current_result;
-//     int best_score_loop = 0;
-//     Solution best_solution = current_solution;
-
-//     // std::vector<std::pair<double, Solution>> best_score_flow;
-//     // std::vector<std::pair<double, Solution>> current_score_flow;
-//     // std::vector<std::pair<double, Solution>> neighbor_score_flow;
-//     // std::vector<std::pair<double, Solution>> neighbor_solution_flow;
-
-//     int temperature = initialTemperature;
-//     for (int iter = 0; iter < max_iter; ++iter) {
-//         //reset soil_amount copy
-//         double soil_amount_copy[GRID_SIZE_X][GRID_SIZE_Y];
-//         for (int i = 0; i < GRID_SIZE_X; i++) {
-//             for (int j = 0; j < GRID_SIZE_Y; j++) {
-//                 soil_amount_copy[i][j] = soil_amount[i][j];
-//             }
-//         }
-//         temperature *= alpha;
-
-//         //print current solution and result
-//         auto neighbor_order = generateNeighborAllocationOrder(current_order, current_solution, soil_amount_copy);
-//         std::vector<Allocation> neighbor_allocations;
-//         neighbor_allocations.insert(neighbor_allocations.end(), neighbor_order.formerAllocations.begin(), neighbor_order.formerAllocations.end());
-//         neighbor_allocations.insert(neighbor_allocations.end(), neighbor_order.latterAllocations.begin(), neighbor_order.latterAllocations.end());
-//         auto neighbor_solution = generateSolutionTiming(current_solution, neighbor_allocations, soil_amount_copy);
-//         auto [neighbor_result, neighbor_score] = evaluate_design(neighbor_order, soil_amount_copy, neighbor_solution);
-//         std::cout << "neighbor_score: " << neighbor_score << std::endl;
-//         std::cout << "neithbor_solution:" << std::endl;
-//         neighbor_solution.printParameters();
-//         std::cout << "neighbor_order:" << std::endl;
-//         neighbor_order.printParameters();
-//         std::cout << "neighbor_result:" << std::endl;
-//         neighbor_result.printPath();
-//         std::cout << std::endl;
-//         double random_value = generateRandomDouble(0.0, 1.0);
-
-//         if(neighbor_score == INF){
-//             std::cout << "Neighbor solution is infeasible, skipping acceptance." << std::endl;
-//             continue; // If the neighbor solution is infeasible, skip acceptance
-//         }
-//         // 受け入れ判定
-//         if ((neighbor_score < current_score) || 
-//             (random_value < std::exp(-(std::abs(neighbor_score - current_score)) / temperature))) {
-//             current_order = neighbor_order;
-//             current_score = neighbor_score;
-//             current_result = neighbor_result;
-//             current_solution = neighbor_solution;
-//         }
-        
-//         std::cout <<"current _score: " << current_score << std::endl;
-//         std::cout << "current_order:" << std::endl;
-//         current_order.printParameters();
-//         std::cout << "current_result:" << std::endl;
-//         current_result.printPath();
-
-//         // ベスト解の更新
-//         if (current_score < best_score) {
-//             best_order = current_order;
-//             best_score = current_score;
-//             best_score_loop = iter;
-//             best_result = current_result;
-//             best_solution = current_solution;
-//         }
-//         std::cout <<std::endl;
-//         std::cout <<std::endl;
-//     }
-
-
-//     //print best solution and result
-//     std::cout << "best_solution:" << std::endl;
-//     best_solution.printParametersForPlot();
-//     std::cout << "best_order:" << std::endl;
-//     best_order.printParametersForPlot();
-//     std::cout << "best_score: " << best_score << std::endl;
-//     best_result.printPathForPlot(best_order.orderToVector());
-//     std::cout << "best_score_loop: " << best_score_loop << std::endl;
-// }
-
-// void simulatedAnnealingForOrderOptimizationWithNoRestriction(std::vector<Allocation>& allocations, Solution& solution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
-//     //allocationの順番を最適化
-//     //formerAllocationsとlatterAllocationsの優先度は崩してもよい条件で
-//     //random initialization
-//     Solution current_solution = solution;
-//     std::cout << "before randomizedAllocations" << std::endl;
-//     auto current_allocations = randomizedAllocations(allocations, current_solution);
-
-//     //initialization with heuristic rule
-//     // AllocationOrder current_order = generateAllocationOrderwithHeuristicRule(allocations, solution, soil_amount);
-//     // std::vector<Allocation> current_allocations = current_order.formerAllocations;
-//     // current_allocations.insert(current_allocations.end(), current_order.latterAllocations.begin(), current_order.latterAllocations.end());
-    
-//     std::cout << "before generateSolutionTiming" << std::endl;
-//     current_solution = generateSolutionTiming(current_solution, current_allocations, soil_amount);
-    
-//     std::cout << "after generateSolutionTiming" << std::endl;
-//     auto [current_result,current_score] = evaluate_design(current_allocations,soil_amount, solution);
-//     std::cout << "after evaluate_design" << std::endl;
-//     std::cout << "initial_score: " << current_score << std::endl;
-//     std::cout << "initial_order:" << std::endl;
-//     for(const auto& alloc : current_allocations) {
-//         std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
-//     }
-//     if(current_score !=INF) {
-//     std::cout << "initial_result:" << std::endl;
-//     current_result.printPath();
-//     }else{
-//         std::cout << "initial_result is infeasible." << std::endl;
-//     }
-//     auto  best_allocations = current_allocations;
-//     auto best_solution = current_solution;
-//     double best_score = current_score;
-//     Result best_result = current_result;
-//     int best_score_loop = 0;
-
-//     // std::vector<std::pair<double, Solution>> best_score_flow;
-//     // std::vector<std::pair<double, Solution>> current_score_flow;
-//     // std::vector<std::pair<double, Solution>> neighbor_score_flow;
-//     // std::vector<std::pair<double, Solution>> neighbor_solution_flow;
-
-//     int temperature = initialTemperature;
-//     for (int iter = 0; iter < max_iter; ++iter) {
-//         //reset soil_amount copy
-//         double soil_amount_copy[GRID_SIZE_X][GRID_SIZE_Y];
-//         for (int i = 0; i < GRID_SIZE_X; i++) {
-//             for (int j = 0; j < GRID_SIZE_Y; j++) {
-//                 soil_amount_copy[i][j] = soil_amount[i][j];
-//             }
-//         }
-//         temperature *= alpha;
-
-//         //print current solution and result
-//         auto neighbor_allocations = generateNeighborAllocations(current_allocations, current_solution, soil_amount_copy);
-//         auto neighbor_solution = generateSolutionTiming(current_solution, neighbor_allocations, soil_amount_copy);
-//         auto [neighbor_result, neighbor_score] = evaluate_design(neighbor_allocations, soil_amount_copy, neighbor_solution);
-//         // std::cout << "neighbor_score: " << neighbor_score << std::endl;
-//         // std::cout << "neighbor_allocations:" << std::endl;
-//         // for(const auto& alloc : neighbor_allocations) {
-//         //     std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
-//         // }
-//         // std::cout << "neighbor_result:" << std::endl;
-//         // neighbor_result.printPath();
-//         // std::cout << std::endl;
-//         // std::cout << "neighbor_solution:" << std::endl;
-//         // neighbor_solution.printParameters();
-//         double random_value = generateRandomDouble(0.0, 1.0);
-
-//         if(neighbor_score == INF){
-//             std::cout << "Neighbor solution is infeasible, skipping acceptance." << std::endl;
-//             continue; // If the neighbor solution is infeasible, skip acceptance
-//         }
-//         // 受け入れ判定
-//         if ((neighbor_score < current_score) || 
-//             (random_value < std::exp(-(std::abs(neighbor_score - current_score)) / temperature))) {
-//             if(neighbor_score < current_score) {
-//                 std::cout << "Accepting neighbor solution with better score." << std::endl;
-//             } 
-//             current_allocations = neighbor_allocations;
-//             current_score = neighbor_score;
-//             current_result = neighbor_result;
-//             current_solution = neighbor_solution;
-//         }
-        
-//         // std::cout <<"current _score: " << current_score << std::endl;
-//         // std::cout << "current_allocations:" << std::endl;
-//         // for(const auto& alloc : current_allocations) {
-//         //     std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
-//         // }
-//         // std::cout << "current_result:" << std::endl;
-//         // current_result.printPath();
-
-//         // ベスト解の更新
-//         if (current_score < best_score) {
-//             best_allocations = current_allocations;
-//             best_score = current_score;
-//             best_score_loop = iter;
-//             best_result = current_result;
-//             best_solution = current_solution;
-//         }
-//         std::cout <<std::endl;
-//         std::cout <<std::endl;
-//     }
-
-//     //print best solution and result
-//     std::cout << "best_solution:" << std::endl;
-//     best_solution.printParametersForPlot();
-//     std::cout << "best_allocations:" << std::endl;
-//     for(const auto& alloc : best_allocations) {
-//         std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
-//     }
-//     std::cout << "best_score: " << best_score << std::endl;
-//     best_result.printPathForPlot(best_allocations);
-//     std::cout << "best_score_loop: " << best_score_loop << std::endl;
-// }
-
 std::tuple<Solution,std::vector<Allocation>> generateNeighborAllocationsAndTiming(
     const Solution& current_solution,
     const std::vector<Allocation>& current_allocations
@@ -3635,6 +3503,7 @@ std::tuple<Solution,std::vector<Allocation>> generateNeighborAllocationsAndTimin
 }
 
 void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, Solution& solution, double soil_amount[GRID_SIZE_X][GRID_SIZE_Y]) {
+    std::ofstream outputFile("optimization_result.txt"); // 書き込み用
     Solution current_solution = solution;
 
     auto [current_result, current_score, current_sub_solution] = evaluate_design(allocations, soil_amount, current_solution);
@@ -3655,16 +3524,17 @@ void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, 
     Result best_result = current_result;
     Solution best_solution = current_solution;
     Solution best_sub_solution = current_sub_solution;
+    int best_score_iteration = 0;
 
     int temperature = initialTemperature;
 
     for (int iter = 0; iter < max_iter; ++iter) {
-        std::cout << "=== Iteration " << iter << " ===" << std::endl;
+        std::cout << "=== Iteration " << iter << " ===" <<  current_score << std::endl;
+        outputFile << "=== Iteration " << iter << " ===" <<  current_score << std::endl;
         //print current solution
         
-        std::cout << "Current Score: " << current_score << std::endl;
-        std::cout << "Current Solution.size: " << current_solution.roadbuildStatusList.size() << std::endl;
-        current_solution.printParameters();
+        // std::cout << "Current Solution.size: " << current_solution.roadbuildStatusList.size() << std::endl;
+        // current_solution.printParameters();
 
         temperature *= alpha;
 
@@ -3673,22 +3543,26 @@ void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, 
             for (int j = 0; j < GRID_SIZE_Y; j++)
                 soil_amount_copy[i][j] = soil_amount[i][j];
 
+        std::cout << "Generating neighbor solution..." << std::endl;
         // 新しいポジション生成
         auto neighbor_solution = generate_randomPostion(current_solution, current_result, current_allocations, soil_amount_copy);
-
+        std::cout << "Generated neighbor solution." << std::endl;
         // 初期の割当順序生成
+        std::cout << "Initializing neighbor allocations..." << std::endl;
         auto neighbor_allocations = initializeAllocation(current_allocations, neighbor_solution, soil_amount_copy);
-
+        std::cout << "Initialized neighbor allocations." << std::endl;
         // 初期のタイミング生成
+        std::cout << "Generating neighbor solution timing..." << std::endl;
         neighbor_solution = generateSolutionTiming(neighbor_solution, neighbor_allocations, soil_amount_copy);
-
+        std::cout << "Generated neighbor solution timing." << std::endl;
         // 内部 SA ループ
         int inter_temperature = initialTemperature;
-        int inter_max_iter = neighbor_solution.roadNum * 200;
+        int inter_max_iter = neighbor_solution.roadNum * 400;
         Solution local_solution = neighbor_solution;
         std::vector<Allocation> local_allocations = neighbor_allocations;
+        // std::cout << "evaluating neighbor solution timing..." << std::endl;
         auto [local_result, local_score, local_sub_solution] = evaluate_design(local_allocations, soil_amount_copy, local_solution);
-
+        // std::cout << "evaluated neighbor solution timing." << std::endl;
         // 内部ループのベスト解を保持
         double best_local_score = local_score;
         Solution best_local_solution = local_solution;
@@ -3697,24 +3571,23 @@ void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, 
         Solution best_local_sub_solution = local_sub_solution;
 
         double beta = 0.90;
-        neighbor_solution.printParameters();
-        std::cout << "neighbor_solution.roadNum: " << neighbor_solution.roadNum << std::endl;
-        std::cout << "neighbor_solution.size: " << neighbor_solution.roadbuildStatusList.size() << std::endl;
+        // neighbor_solution.printParameters();
+        // std::cout << "neighbor_solution.roadNum: " << neighbor_solution.roadNum << std::endl;
+        // std::cout << "neighbor_solution.size: " << neighbor_solution.roadbuildStatusList.size() << std::endl;
         int no_update_count = 0;  //現在解が更新されなかった回数カウント
-        int no_update_threshold = inter_max_iter * 0.05;  // 例: 5% を閾値とする
+        int no_update_threshold = inter_max_iter * 0.1;  // 例: 10% を閾値とする
 
         for (int k = 0; k < inter_max_iter; ++k) {
-            std::cout << "=== Inner Iteration " << k << "=== " << local_score << std::endl;
+            // std::cout << "=== Inner Iteration " << k << "=== " << local_score << std::endl;
             inter_temperature *= beta;
 
             double soil_amount_local[GRID_SIZE_X][GRID_SIZE_Y];
             for (int i = 0; i < GRID_SIZE_X; i++)
                 for (int j = 0; j < GRID_SIZE_Y; j++)
                     soil_amount_local[i][j] = soil_amount[i][j];
-
+            
             auto [neighbor_sol, neighbor_alloc] = generateNeighborAllocationsAndTiming(local_solution, local_allocations);
             auto [neighbor_result, neighbor_score, neighbor_sub_solution] = evaluate_design(neighbor_alloc, soil_amount_local, neighbor_sol);
-
             if (neighbor_score == INF) continue;
 
             double random_value = generateRandomDouble(0.0, 1.0);
@@ -3743,13 +3616,16 @@ void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, 
             }
         }
 
-        // 内部ループのベスト結果出力
-        std::cout << "[Inner Loop Best] Score: " << best_local_score << std::endl;
-        best_local_solution.printParameters();
-        best_local_result.printPath();
-        std::cout << "Best Local Allocations:" << std::endl;
-        for (const auto& alloc : best_local_allocations) {
-            std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+        // // 内部ループのベスト結果出力
+        // std::cout << "[Inner Loop Best] Score: " << best_local_score << std::endl;
+        // best_local_solution.printParameters();
+        // if(best_local_score!=INF) best_local_result.printPath();
+        // std::cout << "Best Local Allocations:" << std::endl;
+        // for (const auto& alloc : best_local_allocations) {
+        //     std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+        // }
+        if( best_local_score == INF) {
+            continue; // 最良のローカルスコアがINFの場合は更新をスキップ
         }
 
         // outer loop に反映
@@ -3761,7 +3637,7 @@ void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, 
             current_sub_solution = best_local_sub_solution;
         }
 
-        std::cout << "[Iter " << iter << "] Score: " << current_score << std::endl;
+        // std::cout << "[Iter " << iter << "] Score: " << current_score << std::endl;
 
         if (current_score < best_score) {
             best_score = current_score;
@@ -3769,19 +3645,24 @@ void simulatedAnnealingForAllOptimization(std::vector<Allocation>& allocations, 
             best_result = current_result;
             best_allocations = current_allocations;
             best_sub_solution = current_sub_solution;
+            best_score_iteration = iter;
         }
     }
 
-    std::cout << "=== Best Result ===" << std::endl;
-    best_solution.printParameters();
-    best_result.printPath();
-    std::cout << "Best Allocations:" << std::endl;
+    outputFile << std::endl;
+    outputFile << "=== Best Result ===" << std::endl;
+    outputFile << "Best Iteration: " << best_score_iteration << std::endl;
+    best_solution.recordParametersModified(outputFile);
+    if(best_score != INF) best_result.recordPath(outputFile);
+    outputFile << "Best Allocations:" << std::endl;
     for (const auto& alloc : best_allocations) {
-        std::cout << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
+        outputFile << "Allocation: start(" << alloc.start.x << "," << alloc.start.y << ") goal(" << alloc.goal.x << "," << alloc.goal.y << ") volume: " << alloc.volume << std::endl;
     }
-    std::cout << "Best Score: " << best_score << std::endl;
-    std::cout << "Best Sub Solution:" << std::endl;
-    best_sub_solution.printParameters();
+    outputFile << "Best Score: " << best_score << std::endl;
+    outputFile << "Best Sub Solution:" << std::endl;
+    best_sub_solution.recordParametersModified(outputFile);
+
+    outputFile.close();
 }
 
 
@@ -3802,28 +3683,28 @@ int main() {
     //     {-11200.0, -24800.0, -34400.0, -2700.0}
     // };
 
-    // double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
-    // {
-    //     {-15000.0, -62600.0, -3700.0, 0.0},
-    //     {-3700.0, 22500.0, 22500.0, -1400.0},
-    //     {3700.0, 33800.0, 28100.0, 2300.0},
-    //     {9000.0, 36000.0, 23000.0, 1200.0},
-    //     {9000.0, 23000.0, 24300.0, 9000.0},
-    //     {8000.0, 22200.0, 14200.0, -5900.0},
-    //     {-1000.0, 8100.0, -12400.0, -9900.0},
-    //     {-11200.0, -24800.0, -34400.0, -2700.0},
-    //     {-2300.0, -9900.0, -72500.0, 2300.0},
-    //     {-22000.0, -2200.0, -28500.0, -100.0},
-    //     {-6900.0, 14300.0, -2500.0, 0.0},
-    //     {11200.0, 7900.0, 0.0, 0.0}
-    // };
     double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
     {
-        {1,0,-1,0},
-        {0,-1,0,-1},
-        {-1,0,2,0},
-        {0,0,1,0},
+        {-15000.0, -62600.0, -3700.0, 0.0},
+        {-3700.0, 22500.0, 22500.0, -1400.0},
+        {3700.0, 33800.0, 28100.0, 2300.0},
+        {9000.0, 36000.0, 23000.0, 1200.0},
+        {9000.0, 23000.0, 24300.0, 9000.0},
+        {8000.0, 22200.0, 14200.0, -5900.0},
+        {-1000.0, 8100.0, -12400.0, -9900.0},
+        {-11200.0, -24800.0, -34400.0, -2700.0},
+        {-2300.0, -9900.0, -72500.0, 2300.0},
+        {-22000.0, -2200.0, -28500.0, -100.0},
+        {-6900.0, 14300.0, -2500.0, 0.0},
+        {11200.0, 7900.0, 0.0, 0.0}
     };
+    // double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
+    // {
+    //     {1,0,-1,0},
+    //     {0,-1,0,-1},
+    //     {-1,0,2,0},
+    //     {0,0,1,0},
+    // };
     //   double soil_amount[GRID_SIZE_X][GRID_SIZE_Y] =
     // {
     //     {1,0,-1,0},
@@ -3850,13 +3731,13 @@ int main() {
     //check if sum of soil_amount is zero
     checkSoilAmountTotal(soil_amount);
     // Initialize allocations
-      std::vector<Allocation> allocations = 
-    {
-        {{0, 0}, {2, 0}, 1},
-        {{2, 2}, {0, 2}, 1},
-        {{2, 2}, {1, 1}, 1},
-        {{3, 2}, {1, 3}, 1},
-    };
+    //   std::vector<Allocation> allocations = 
+    // {
+    //     {{0, 0}, {2, 0}, 1},
+    //     {{2, 2}, {0, 2}, 1},
+    //     {{2, 2}, {1, 1}, 1},
+    //     {{3, 2}, {1, 3}, 1},
+    // };
 
     // std::vector<Allocation> allocations = 
     // {
@@ -3896,51 +3777,51 @@ int main() {
     //     {{1, 1}, {0, 0}, 11300.0}
     // };
 
-// std::vector<Allocation> allocations = {
-//     {{11, 1}, {10, 2}, 2500.0},
-//     {{11, 1}, {9, 2}, 5400.0},
-//     {{11, 0}, {10, 0}, 6900.0},
-//     {{11, 0}, {9, 0}, 4300.0},
-//     {{10, 1}, {9, 2}, 12100.0},
-//     {{10, 1}, {9, 1}, 2200.0},
-//     {{8, 3}, {9, 3}, 100.0},
-//     {{8, 3}, {9, 2}, 2200.0},
-//     {{3, 1}, {9, 2}, 8800.0},
-//     {{5, 0}, {9, 0}, 8000.0},
-//     {{4, 0}, {9, 0}, 4000.0},
-//     {{3, 0}, {9, 0}, 5700.0},
-//     {{5, 2}, {8, 2}, 14200.0},
-//     {{4, 2}, {8, 2}, 24300.0},
-//     {{4, 1}, {8, 2}, 17400.0},
-//     {{3, 1}, {8, 2}, 16600.0},
-//     {{6, 1}, {8, 1}, 8100.0},
-//     {{3, 1}, {8, 1}, 1800.0},
-//     {{3, 0}, {8, 0}, 2300.0},
-//     {{2, 2}, {7, 3}, 2700.0},
-//     {{4, 1}, {7, 2}, 5600.0},
-//     {{3, 2}, {7, 2}, 22100.0},
-//     {{2, 2}, {7, 2}, 6700.0},
-//     {{5, 1}, {7, 1}, 22200.0},
-//     {{3, 1}, {7, 1}, 2600.0},
-//     {{4, 0}, {7, 0}, 5000.0},
-//     {{3, 1}, {7, 0}, 6200.0},
-//     {{4, 3}, {6, 3}, 9000.0},
-//     {{3, 2}, {6, 3}, 900.0},
-//     {{2, 2}, {6, 2}, 12400.0},
-//     {{3, 0}, {6, 0}, 1000.0},
-//     {{3, 3}, {5, 3}, 1200.0},
-//     {{2, 3}, {5, 3}, 900.0},
-//     {{2, 2}, {5, 3}, 3800.0},
-//     {{2, 3}, {1, 3}, 1400.0},
-//     {{2, 2}, {0, 1}, 2500.0},
-//     {{1, 2}, {0, 2}, 3700.0},
-//     {{2, 1}, {1, 0}, 3700.0},
-//     {{2, 1}, {0, 1}, 30100.0},
-//     {{1, 2}, {0, 1}, 18800.0},
-//     {{2, 0}, {0, 0}, 3700.0},
-//     {{1, 1}, {0, 1}, 11200.0},
-//     {{1, 1}, {0, 0}, 11300.0}
-// };
+std::vector<Allocation> allocations = {
+    {{11, 1}, {10, 2}, 2500.0},
+    {{11, 1}, {9, 2}, 5400.0},
+    {{11, 0}, {10, 0}, 6900.0},
+    {{11, 0}, {9, 0}, 4300.0},
+    {{10, 1}, {9, 2}, 12100.0},
+    {{10, 1}, {9, 1}, 2200.0},
+    {{8, 3}, {9, 3}, 100.0},
+    {{8, 3}, {9, 2}, 2200.0},
+    {{3, 1}, {9, 2}, 8800.0},
+    {{5, 0}, {9, 0}, 8000.0},
+    {{4, 0}, {9, 0}, 4000.0},
+    {{3, 0}, {9, 0}, 5700.0},
+    {{5, 2}, {8, 2}, 14200.0},
+    {{4, 2}, {8, 2}, 24300.0},
+    {{4, 1}, {8, 2}, 17400.0},
+    {{3, 1}, {8, 2}, 16600.0},
+    {{6, 1}, {8, 1}, 8100.0},
+    {{3, 1}, {8, 1}, 1800.0},
+    {{3, 0}, {8, 0}, 2300.0},
+    {{2, 2}, {7, 3}, 2700.0},
+    {{4, 1}, {7, 2}, 5600.0},
+    {{3, 2}, {7, 2}, 22100.0},
+    {{2, 2}, {7, 2}, 6700.0},
+    {{5, 1}, {7, 1}, 22200.0},
+    {{3, 1}, {7, 1}, 2600.0},
+    {{4, 0}, {7, 0}, 5000.0},
+    {{3, 1}, {7, 0}, 6200.0},
+    {{4, 3}, {6, 3}, 9000.0},
+    {{3, 2}, {6, 3}, 900.0},
+    {{2, 2}, {6, 2}, 12400.0},
+    {{3, 0}, {6, 0}, 1000.0},
+    {{3, 3}, {5, 3}, 1200.0},
+    {{2, 3}, {5, 3}, 900.0},
+    {{2, 2}, {5, 3}, 3800.0},
+    {{2, 3}, {1, 3}, 1400.0},
+    {{2, 2}, {0, 1}, 2500.0},
+    {{1, 2}, {0, 2}, 3700.0},
+    {{2, 1}, {1, 0}, 3700.0},
+    {{2, 1}, {0, 1}, 30100.0},
+    {{1, 2}, {0, 1}, 18800.0},
+    {{2, 0}, {0, 0}, 3700.0},
+    {{1, 1}, {0, 1}, 11200.0},
+    {{1, 1}, {0, 0}, 11300.0}
+};
 
 
     // Initialize Solution
@@ -4049,6 +3930,8 @@ int main() {
 
     // //test evaluate_design
     // auto [result, score, subsolution] = evaluate_design(allocations, soil_amount_copy, initSolution);
+    // std::cout << "Solution:" << std::endl;
+    // initSolution.printParameters();
     // std::cout << "Result:" << std::endl;
     // result.printPath();
     // std::cout << "Score: " << score << std::endl;
